@@ -109,26 +109,13 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 # Initialize ChromaDB with persistence
 
-def clear_directory(directory):
-    for filename in os.listdir(directory):
-        file_path = os.path.join(directory, filename)
-        try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)
-        except Exception as e:
-            print(f"Failed to delete {file_path}. Reason: {e}")
 
 CHROMA_DB_PATH = os.getenv("CHROMADB_PATH", "./chromadb")
-if os.path.exists(CHROMA_DB_PATH):
-    clear_directory(CHROMA_DB_PATH)
-else:
-    os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+os.makedirs(CHROMA_DB_PATH, exist_ok=True)
 
 embedding_function = OpenAIEmbeddings(openai_api_key=openai_api_key)
 vectorstore = Chroma(persist_directory=CHROMA_DB_PATH, embedding_function=embedding_function)
-
+vectorstore.delete_collection()
 
 # Load and process documents from the same location as the code file
 
