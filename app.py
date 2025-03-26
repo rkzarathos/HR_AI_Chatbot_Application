@@ -52,7 +52,7 @@ CHAT_LOG_DIR = os.getenv("CHATHISTORY_PATH", os.path.join(os.getcwd(), "chathist
 AUDIO_DIR = os.getenv("AUDIO_PATH", os.path.join(os.getcwd(), "audio"))
 
 
-CHAT_HISTORY_FILE = "chat_history.xlsx"
+CHAT_HISTORY_FILE = os.path.join(CHAT_LOG_DIR, "chat_history.xlsx")
 
 def save_to_excel(query, response, feedback=None):
     """Append a query-response pair to an Excel file."""
