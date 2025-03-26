@@ -95,7 +95,7 @@ if not openai_api_key:
 app = FastAPI()
 
 # Set up Jinja2 templates for frontend rendering
-templates = Jinja2Templates(directory="templates")
+templates = Jinja2Templates(directory=".")
 
 # Ensure static directory exists
 STATIC_DIR = "static"
