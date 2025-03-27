@@ -175,7 +175,7 @@ async def generate_audio(text: str, filename: str):
     tts = gTTS(text=text, lang='en')
     audio_path = os.path.join(AUDIO_DIR, f"{filename}.mp3")
     tts.save(audio_path)
-    return f"/static/audio/{filename}.mp3"
+    return f"/audio/{filename}.mp3"
 
 @app.get("/")
 async def serve_frontend(request: Request):
@@ -249,8 +249,7 @@ async def submit_feedback(request: Request):
         return JSONResponse(content={"error": f"Failed to save feedback: {str(e)}"}, status_code=500)
 
 
-
-@app.get("/static/audio/{filename}")
+@app.get("/audio/{filename}")
 async def get_audio(filename: str):
     file_path = os.path.join(AUDIO_DIR, filename)
     if os.path.exists(file_path):
