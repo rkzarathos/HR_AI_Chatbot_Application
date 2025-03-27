@@ -47,13 +47,8 @@ blob_service_client = BlobServiceClient.from_connection_string(azure_connection_
 #    print("Chat history container likely exists:", e)
 
 
-DOCUMENTS_DIR = os.getenv("DOCUMENTS_PATH", os.path.join(os.getcwd(), "documents"))
+
 CHAT_LOG_DIR = os.getenv("CHATHISTORY_PATH", os.path.join(os.getcwd(), "chathistory"))
-AUDIO_DIR = os.getenv("AUDIO_PATH", os.path.join(os.getcwd(), "audio"))
-os.makedirs(AUDIO_DIR, exist_ok=True)
-os.makedirs(CHAT_LOG_DIR, exist_ok=True)
-
-
 CHAT_HISTORY_FILE = os.path.join(CHAT_LOG_DIR, "chat_history.xlsx")
 
 def save_to_excel(query, response, feedback=None):
@@ -107,6 +102,11 @@ templates = Jinja2Templates(directory=".")
 
 # Initialize ChromaDB with persistence
 
+DOCUMENTS_DIR = os.getenv("DOCUMENTS_PATH", os.path.join(os.getcwd(), "documents"))
+
+AUDIO_DIR = os.getenv("AUDIO_PATH", os.path.join(os.getcwd(), "audio"))
+os.makedirs(AUDIO_DIR, exist_ok=True)
+os.makedirs(CHAT_LOG_DIR, exist_ok=True)
 
 CHROMA_DB_PATH = os.getenv("CHROMADB_PATH", "./chromadb")
 os.makedirs(CHROMA_DB_PATH, exist_ok=True)
