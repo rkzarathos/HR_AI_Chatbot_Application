@@ -27,8 +27,11 @@ import pandas as pd
 from openpyxl import load_workbook
 import shutil
 import datetime
+import uuid
 
 
+
+session_id = str(uuid.uuid4())
 
 azure_connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
 print("AZURE_STORAGE_CONNECTION_STRING: ",azure_connection_string)
@@ -50,7 +53,7 @@ blob_service_client = BlobServiceClient.from_connection_string(azure_connection_
 
 
 CHAT_LOG_DIR = os.getenv("CHATHISTORY_PATH", os.path.join(os.getcwd(), "chathistory"))
-CHAT_HISTORY_FILE = os.path.join(CHAT_LOG_DIR, "chat_history.xlsx")
+CHAT_HISTORY_FILE = os.path.join(CHAT_LOG_DIR, f"{session_id}_chat_history.xlsx")
 
 def save_to_excel(query, response, feedback=None):
     """Append a query-response pair to an Excel file."""
@@ -171,7 +174,7 @@ async def get_logo():
 async def sanitize_filename(filename):
     sanitized_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', filename)
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    return f"{timestamp}_{sanitized_filename}"
+    return f"{session_id}_{timestamp}_{sanitized_filename}"
 
 # Function to generate audio from text
 async def generate_audio(text: str, filename: str):
