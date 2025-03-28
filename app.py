@@ -122,7 +122,7 @@ vectorstore = Chroma(persist_directory=CHROMA_DB_PATH, embedding_function=embedd
 
 
 
-DOCUMENTS = ["doc1.pdf", "doc2.pdf", "doc3.pdf", "doc4.pdf", "doc5.pdf", "doc6.pdf", "doc7.pdf", "doc8.pdf", "doc9.pdf"]
+DOCUMENTS = ["doc1.pdf", "doc2.pdf", "doc3.pdf", "doc4.pdf", "doc5.pdf", "doc6.pdf", "doc7.pdf", "doc8.pdf", "doc9.pdf","doc10.pdf","doc11.pdf", "doc12.pdf", "doc13.pdf", "doc14.pdf", "doc15.pdf", "doc16.pdf", "doc17.pdf", "doc18.pdf", "doc19.pdf", "doc20.pdf"]
 datasource = []
 for doc in DOCUMENTS:
     doc_path = os.path.join(DOCUMENTS_DIR, doc)
@@ -143,7 +143,9 @@ print("Documents added to Vector Store")
 
 
 # Initialize Chat Model
-chat_model = ChatOpenAI(model_name="gpt-4-turbo", temperature=0.4)
+#chat_model = ChatOpenAI(model_name="gpt-4-turbo", temperature=0.4)
+chat_model = ChatOpenAI(model_name="gpt-4.5-preview-2025-02-27", temperature=0.4)
+
 prompt_template=PromptTemplate(
         input_variables=["context","question"],
         template = """You are a document parser/interpreter for the Human Resources Department at On-Target Supplies and Logictics (or OTSL for short).\n"
