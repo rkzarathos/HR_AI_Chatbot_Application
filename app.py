@@ -150,16 +150,15 @@ chat_model = ChatOpenAI(model_name="gpt-4-turbo", temperature=0.4)
 
 prompt_template=PromptTemplate(
         input_variables=["context","question"],
-        template = """You are a document parser/interpreter for the Human Resources Department at On-Target Supplies and Logistics (or OTSL for short).\n"
-        All questions you get come from employees of On-Target Supplies and Logistics.
+        template = """You are a document parser/interpreter for the Human Resources Department at On-Target Supplies & Logistics (or OTSL for short).\n"
+        All questions you get come from employees of On-Target Supplies & Logistics.
         You are given the following context information.\n
         ---------------------\n
         {context}\\n
         ---------------------\n
-        Given the context information and not prior knowledge,
-        answer the query {question}. 
-        Please be detailed and provide answers in meaningful, clearly interpretable sentences. No answer should be more than 5 sentences.\n
-        If required, provide answers in short bullet points.\n""" )
+        Given the context information and no prior knowledge, answer the query {question}.\n 
+        Provide detailed responses in clear, meaningful sentences that are easy to interpret. No response should be more than 3 sentences.\n
+        Provide responses in short bullet points.\n""" )
 
 llm_chain = LLMChain(llm=chat_model, prompt=prompt_template)
 retriever = vectorstore.as_retriever()
@@ -273,3 +272,4 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
