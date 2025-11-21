@@ -231,7 +231,8 @@ prompt_template=PromptTemplate(
         ---------------------\n
         Given the context information and no prior knowledge, answer the query {question}.\n 
         Provide detailed responses in clear, meaningful sentences that are easy to interpret.\n
-        Never provide any person's name or contact information as part of the response.\n
+        In the response, include which team, company, or department to reach out to regarding this information.\n
+        Don't provide any person's name or contact information (phone number or address) as part of the response.\n
         If you refer them to a website, try to provide the link to the website as well.\n
         If an employee account needs to be created and could be necessary and relevant to the query, provide instructions for the same.\n
         Provide responses in short bullet points.\n""" )
@@ -402,6 +403,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
