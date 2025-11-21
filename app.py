@@ -230,7 +230,7 @@ prompt_template=PromptTemplate(
         {context}\\n
         ---------------------\n
         Given the context information and no prior knowledge, answer the query {question}.\n 
-        Provide detailed responses in clear, meaningful sentences that are easy to interpret. No response should be more than 5 sentences.\n
+        Provide detailed responses in clear, meaningful sentences that are easy to interpret.\n
         Never provide any person's name or contact information as part of the response.\n
         If you refer them to a website, try to provide the link to the website as well.\n
         If an employee account needs to be created and could be necessary and relevant to the query, provide instructions for the same.\n
@@ -402,6 +402,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
