@@ -191,32 +191,6 @@ embedding_function = OpenAIEmbeddings(openai_api_key=openai_api_key)
 vectorstore = Chroma(persist_directory=CHROMA_DB_PATH, embedding_function=embedding_function)
 cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
-# Load and process documents from the same location as the code file
-
-
-
-DOCUMENTS = ["doc1.pdf", "doc2.pdf", "doc3.pdf", "doc4.pdf", "doc5.pdf", "doc6.pdf", "doc7.pdf", "doc8.pdf", "doc9.pdf","doc10.pdf",
-            "doc11.pdf", "doc12.pdf", "doc13.pdf", "doc14.pdf", "doc15.pdf", "doc16.pdf", "doc17.pdf", "doc18.pdf", "doc19.pdf", "doc20.pdf",
-            "doc21.pdf", "doc22.pdf", "doc23.pdf","doc24.pdf", "doc25.pdf"]
-datasource = []
-for doc in DOCUMENTS:
-    doc_path = os.path.join(DOCUMENTS_DIR, doc)
-    if os.path.exists(doc_path):
-        try:
-            datasource.extend(PDFMinerLoader(doc_path).load())
-        except ValueError:
-            print(f"PDFMiner failed to load {doc_path}, using PyMuPDFLoader instead.")
-            datasource.extend(PyMuPDFLoader(doc_path).load())
-
-# Split documents and store in ChromaDB
-print("Collected all documents")
-text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(chunk_size=800, chunk_overlap=200)
-docs = text_splitter.split_documents(datasource)
-print("Documents Split")
-vectorstore.add_documents(docs)
-print("Documents added to Vector Store")
-
-
 # Initialize Chat Model
 
 chat_model = ChatOpenAI(model_name="gpt-4.1-mini", temperature=0.2)
@@ -404,6 +378,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
