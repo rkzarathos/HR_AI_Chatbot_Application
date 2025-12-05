@@ -43,7 +43,7 @@ DOCUMENTS = [
     "doc11.pdf", "doc12.pdf", "doc13.pdf", "doc14.pdf", "doc15.pdf",
     "doc16.pdf", "doc17.pdf", "doc18.pdf", "doc19.pdf", "doc20.pdf",
     "doc21.pdf", "doc22.pdf", "doc23.pdf", "doc24.pdf", "doc25.pdf",
-    "doc26.pdf", "doc27.pdf",
+    "doc26.pdf", "doc27.pdf", "doc28.pdf",
 ]
 
 # ========================
