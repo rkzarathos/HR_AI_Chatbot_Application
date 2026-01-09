@@ -31,7 +31,8 @@ import uuid
 from typing import List
 from langchain.schema import Document
 from sentence_transformers import CrossEncoder
-
+from azure.data.tables import TableServiceClient, UpdateMode
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
 session_id = str(uuid.uuid4())
 
@@ -54,8 +55,17 @@ blob_service_client = BlobServiceClient.from_connection_string(azure_connection_
 
 
 
-CHAT_LOG_DIR = os.getenv("CHATHISTORY_PATH", os.path.join(os.getcwd(), "chathistory"))
-CHAT_HISTORY_FILE = os.path.join(CHAT_LOG_DIR, f"{session_id}_chat_history.xlsx")
+# CHAT_LOG_DIR = os.getenv("CHATHISTORY_PATH", os.path.join(os.getcwd(), "chathistory"))
+# CHAT_HISTORY_FILE = os.path.join(CHAT_LOG_DIR, f"{session_id}_chat_history.xlsx")
+
+CHAT_LOG_DIR = os.getenv("CHATHISTORY_PATH", "chathistory")
+
+table_service = TableServiceClient.from_connection_string(azure_connection_string)
+table_client = table_service.get_table_client(CHAT_LOG_DIR)
+try:
+    table_client.create_table()
+except ResourceExistsError:
+    pass
 
 _RE_FENCE      = re.compile(r"```.*?```", re.S)
 _RE_INLINECODE = re.compile(r"`([^`]*)`")
@@ -71,6 +81,41 @@ _RE_TABLE_RULE = re.compile(r"^\s*\|?\s*[:\-| ]+\s*\|?\s*$", re.M)  # ---|:--- l
 _RE_HTML       = re.compile(r"<[^>]+>")
 _RE_TIME_COLON = re.compile(r'(?<=\d):(?=\d)')
 _RE_URL = re.compile(r'\b(?:https?|ftp)://\S+')
+
+
+def _make_row_key() -> str:
+    now = datetime.datetime.utcnow()
+    return f"{now.strftime('%Y%m%d%H%M%S%f')}_{uuid.uuid4().hex}"
+
+
+def log_chat_to_table(session_id: str, question: str, response: str) -> str:
+    row_key = _make_row_key()
+    now = datetime.datetime.utcnow().isoformat() + "Z"
+
+    entity = {
+        "PartitionKey": session_id,     # groups all rows from this session
+        "RowKey": row_key,              # unique id per interaction
+        "CreatedUtc": now,
+        "Question": question,
+        "Response": response,
+        "Feedback": "",                 # updated later
+    }
+
+    # NOTE: Table entity max size is 1 MB. If you expect long responses,
+    # store response in Blob and put only a pointer here.
+    table_client.create_entity(entity=entity)
+    return row_key
+
+
+def update_feedback_in_table(session_id: str, row_key: str, feedback: str):
+    patch = {
+        "PartitionKey": session_id,
+        "RowKey": row_key,
+        "Feedback": feedback,
+        "FeedbackUtc": datetime.datetime.utcnow().isoformat() + "Z",
+    }
+    table_client.update_entity(mode=UpdateMode.MERGE, entity=patch)
+
 
 
 def markdown_to_speech_text(md: str, normalize_colons: bool = True, colon_replacement: str = " — ") -> str:
@@ -126,7 +171,7 @@ def markdown_to_speech_text(md: str, normalize_colons: bool = True, colon_replac
     return t.strip()
 
 
-
+'''
 def save_to_excel(query, response, feedback=None):
     """Append a query-response pair to an Excel file."""
     try:
@@ -152,6 +197,8 @@ def save_to_excel(query, response, feedback=None):
     except Exception as e:
         print(f"Error saving to Excel: {e}")
 
+'''
+
 # Load environment variables
 # openai_api_key = os.getenv("OPENAI_API_KEY")
 # if not openai_api_key:
@@ -160,7 +207,6 @@ def save_to_excel(query, response, feedback=None):
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set.")
-
 
 
 # Initialize FastAPI app
@@ -324,11 +370,27 @@ async def ask_question(request: Request):
                     await asyncio.sleep(0)
                 
                 # Process audio generation and metadata
-                save_to_excel(question, full_response)
+                '''
+                log_id = log_chat_to_table(session_id, question, full_response)
                 sanitized_filename = await sanitize_filename(question)
                 audio_url = await generate_audio(full_response, sanitized_filename)
                 sources = [doc.page_content for doc in relevant_docs]
                 yield json.dumps({"type": "metadata", "sources": sources, "audio_url": audio_url}) + "\n\n"
+                '''
+                log_id = log_chat_to_table(session_id, question, full_response)
+
+                sanitized_filename = f"{session_id}_{uuid.uuid4().hex}"
+                audio_url = await generate_audio(full_response, sanitized_filename)
+                
+                sources = [doc.page_content for doc in relevant_docs]
+                yield json.dumps({
+                    "type": "metadata",
+                    "sources": sources,
+                    "audio_url": audio_url,
+                    "log_id": log_id,
+                    "session_id": session_id
+                }) + "\n\n"
+                
             except Exception as e:
                 print(f"Error in streaming generator: {e}")
                 yield json.dumps({"type": "error", "content": str(e)}) + "\n\n"
@@ -339,7 +401,7 @@ async def ask_question(request: Request):
         print(f"Error processing request: {e}")
         return JSONResponse(content={"error": f"Server error: {str(e)}"}, status_code=500)
 
-
+'''
 @app.post("/feedback")
 async def submit_feedback(request: Request):
     data = await request.json()
@@ -365,6 +427,23 @@ async def submit_feedback(request: Request):
 
     except Exception as e:
         return JSONResponse(content={"error": f"Failed to save feedback: {str(e)}"}, status_code=500)
+'''
+
+@app.post("/feedback")
+async def submit_feedback(request: Request):
+    data = await request.json()
+    feedback = data.get("feedback")
+    log_id = data.get("log_id")
+    sess = data.get("session_id", session_id)  # fallback to server session_id
+
+    if not log_id or not feedback:
+        return JSONResponse(content={"error": "Missing log_id or feedback"}, status_code=400)
+
+    try:
+        update_feedback_in_table(sess, log_id, feedback)
+        return JSONResponse(content={"message": "Feedback saved successfully"})
+    except Exception as e:
+        return JSONResponse(content={"error": f"Failed to save feedback: {str(e)}"}, status_code=500)
 
 
 @app.get("/audio/{filename}")
@@ -378,6 +457,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
