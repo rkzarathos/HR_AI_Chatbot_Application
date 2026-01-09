@@ -351,6 +351,9 @@
     // Global variables to store current question and answer for feedback
     let currentQuestion = "";
     let currentAnswer = "";
+    let currentLogId = "";
+    let currentSessionId = "";
+
     // Terms flag (forces acceptance every session/page load)
     let termsAccepted = false;
 
@@ -454,10 +457,13 @@
             if (data.type === "text") {
               fullResponse += data.content;
               chatResponse.innerHTML = marked.parse(fullResponse);
-            } else if (data.type === "metadata") {
-              sources = data.sources;
-              audioUrl = data.audio_url;
-            }
+            } } else if (data.type === "metadata") {
+                sources = data.sources || [];
+                audioUrl = data.audio_url || "";
+                currentLogId = data.log_id || "";
+                currentSessionId = data.session_id || "";
+              }
+
           }
         }
         
@@ -473,6 +479,9 @@
         }
         
         currentAnswer = fullResponse; // store the answer for feedback
+        document.getElementById("feedback-status").innerHTML = "";
+        document.getElementById("feedback-input").value = "";
+
         updateChatHistory(currentQuestion, currentAnswer);
         document.getElementById("user-input").value = "";
       } catch (error) {
@@ -513,11 +522,17 @@
         let response = await fetch("/feedback", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          if (!currentLogId) {
+            feedbackStatus.innerHTML = "<p style='color: red;'>No response ID found yet. Ask a question first, then submit feedback.</p>";
+            return;
+          }
+          
           body: JSON.stringify({
-            question: currentQuestion,
-            full_response: currentAnswer,
-            feedback: feedbackText
+            feedback: feedbackText,
+            log_id: currentLogId,
+            session_id: currentSessionId
           })
+
         });
         
         if (!response.ok) {
@@ -549,4 +564,5 @@
   </script>
 </body>
 </html>
+
 
