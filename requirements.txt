@@ -18,5 +18,6 @@ python-dotenv
 aiofiles
 azure-ai-documentintelligence
 azure-core
+azure-data-tables
 
 
