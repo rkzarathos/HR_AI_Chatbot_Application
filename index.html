@@ -549,8 +549,9 @@
     console.log("Submitting feedback payload:", {
       feedback: feedbackText,
       log_id: currentLogId,
-      session_id: currentSessionId
+      session_id: clientSessionId
     });
+
   
     try {
       let response = await fetch("/feedback", {
@@ -593,6 +594,7 @@
   </script>
 </body>
 </html>
+
 
 
 
