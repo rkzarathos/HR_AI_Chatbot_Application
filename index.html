@@ -2,6 +2,16 @@
 <html lang="en">
 <head>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    .hidden { display: none; }
+    .overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:9999; }
+    .modal { background:#fff; max-width:720px; width:92%; padding:20px; border-radius:12px; }
+    .q { margin: 14px 0; }
+    .scale button { margin-right:8px; width:40px; height:36px; }
+    .scale button.selected { outline: 2px solid #000; }
+    .actions { display:flex; gap:10px; justify-content:flex-end; margin-top: 16px; }
+    .status { margin-top: 10px; }
+  </style>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>OTSL HR Chatbot</title>
@@ -264,6 +274,45 @@
   </div>
   
   <div class="container">
+
+    <div id="surveyOverlay" class="overlay hidden">
+      <div class="modal">
+        <h2>HR Chatbot Employee Experience Survey</h2>
+        <p>Use the scale below to rate your experience</p>
+        <p><b>1</b>=Strongly Disagree · <b>2</b>=Disagree · <b>3</b>=Neutral · <b>4</b>=Agree · <b>5</b>=Strongly Agree</p>
+    
+        <form id="surveyForm">
+          <div class="q">
+            <label>I feel more empowered to access HR information independently because of the chatbot</label>
+            <div class="scale" data-q="q1"></div>
+          </div>
+          <div class="q">
+            <label>My question was resolved by the chatbot without HR or Management involvement</label>
+            <div class="scale" data-q="q2"></div>
+          </div>
+          <div class="q">
+            <label>Using the chatbot saved me time compared to contacting HR directly</label>
+            <div class="scale" data-q="q3"></div>
+          </div>
+          <div class="q">
+            <label>The chatbot covered the HR topics I needed (leave, payroll, policies, benefits)</label>
+            <div class="scale" data-q="q4"></div>
+          </div>
+          <div class="q">
+            <label>The chatbot provided accurate information</label>
+            <div class="scale" data-q="q5"></div>
+          </div>
+    
+          <div class="actions">
+            <button type="button" id="surveySkipBtn">Skip</button>
+            <button type="submit" id="surveySubmitBtn">Submit</button>
+          </div>
+          <div id="surveyStatus" class="status"></div>
+        </form>
+      </div>
+    </div>
+
+    
     <h1>OTSL.ai: Ask me Anything...</h1>
     <div class="question-buttons">
       <button onclick="document.getElementById('user-input').value='What\'s the company\'s travel policy?'">What's the company's travel policy?</button>
@@ -524,7 +573,6 @@
     }
     
     // Feedback submission handling
-    // Feedback submission handling
   document.getElementById("feedback-submit").addEventListener("click", async function() {
     if (!termsAccepted) {
       alert("Please accept the Terms & Conditions to use the chatbot.");
@@ -578,22 +626,114 @@
   });
 
     /* --- Terms & Conditions modal wiring --- */
-    const termsModal = document.getElementById("terms-modal");
-    const acceptCheckbox = document.getElementById("accept-checkbox");
-    const acceptButton = document.getElementById("accept-button");
-
-    acceptCheckbox.addEventListener("change", () => {
-      acceptButton.disabled = !acceptCheckbox.checked;
+      const termsModal = document.getElementById("terms-modal");
+      const acceptCheckbox = document.getElementById("accept-checkbox");
+      const acceptButton = document.getElementById("accept-button");
+  
+      acceptCheckbox.addEventListener("change", () => {
+        acceptButton.disabled = !acceptCheckbox.checked;
+      });
+  
+      acceptButton.addEventListener("click", () => {
+        termsAccepted = true;
+        termsModal.style.display = "none";
+        document.body.style.overflow = 'auto';
+      });
+  
+      let surveyRatings = { q1:null, q2:null, q3:null, q4:null, q5:null };
+  
+  function openSurvey() {
+    document.getElementById("surveyOverlay").classList.remove("hidden");
+  }
+  
+  function closeSurvey() {
+    document.getElementById("surveyOverlay").classList.add("hidden");
+  }
+  
+  function buildScales() {
+    document.querySelectorAll(".scale").forEach(scale => {
+      const qKey = scale.getAttribute("data-q");
+      scale.innerHTML = "";
+      for (let i=1; i<=5; i++) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.textContent = i;
+        btn.addEventListener("click", () => {
+          surveyRatings[qKey] = i;
+          // UI highlight
+          [...scale.querySelectorAll("button")].forEach(b => b.classList.remove("selected"));
+          btn.classList.add("selected");
+        });
+        scale.appendChild(btn);
+      }
     });
+  }
+  
+  buildScales();
+  
+  document.getElementById("surveySkipBtn").addEventListener("click", () => {
+    // optionally still log "skipped" if you want; otherwise just close
+    closeSurvey();
+    // end session behavior: clear local history/session if desired
+    // localStorage.removeItem("client_session_id");
+    // location.reload();
+  });
+  
+  document.getElementById("surveyForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const status = document.getElementById("surveyStatus");
+    status.textContent = "";
+  
+    // validate all answered
+    const missing = Object.entries(surveyRatings).filter(([k,v]) => v === null).map(([k]) => k);
+    if (missing.length) {
+      status.textContent = "Please answer all 5 questions (1–5).";
+      return;
+    }
+  
+    try {
+      status.textContent = "Submitting...";
+      const resp = await fetch("/survey", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({
+          session_id: clientSessionId,
+          ratings: surveyRatings
+        })
+      });
+  
+      const data = await resp.json();
+      if (!resp.ok) {
+        status.textContent = data.error || "Survey submission failed.";
+        return;
+      }
+  
+      status.textContent = "Thank you—survey submitted.";
+      setTimeout(() => {
+        closeSurvey();
+        // optional: clear session & reload
+        // localStorage.removeItem("client_session_id");
+        // location.reload();
+      }, 800);
+  
+    } catch (err) {
+      status.textContent = "Network error submitting survey.";
+    }
+  });
 
-    acceptButton.addEventListener("click", () => {
-      termsAccepted = true;
-      termsModal.style.display = "none";
-      document.body.style.overflow = 'auto';
-    });
+  // ==========================
+  // Warn user before closing tab
+  // ==========================
+  window.addEventListener("beforeunload", (e) => {
+    e.preventDefault();
+    e.returnValue = "";
+  });
+
+    
   </script>
 </body>
 </html>
+
 
 
 
