@@ -360,7 +360,7 @@
         <button type="button" class="mic-button" id="mic-button">🎤</button>
       </div>
       <button type="submit">Submit</button>
-      <button type="button" id="end-session-btn">End Session</button>
+
     </form>
     <div id="response-container"></div>
     <audio id="audio-player" controls></audio>
@@ -444,6 +444,17 @@
     // Terms flag (forces acceptance every session/page load)
     let termsAccepted = false;
 
+    // =======================
+    // Survey gating settings
+    // =======================
+    const MAX_FREE_QUESTIONS = 2;
+    
+    let questionCount = parseInt(
+      localStorage.getItem(`question_count_${clientSessionId}`) || "0"
+    );
+
+let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) === "1";
+
     // Prevent body scroll while modal open
     document.body.style.overflow = 'hidden';
 
@@ -462,6 +473,11 @@
     function toggleSidebar(id) {
       if (!termsAccepted) {
         alert("Please accept the Terms & Conditions to use the chatbot.");
+        return;
+      }
+      // ===== Survey gate =====
+      if (!surveyCompleted && questionCount >= MAX_FREE_QUESTIONS) {
+        openSurvey();
         return;
       }
       let sidebar = document.getElementById(id);
@@ -584,6 +600,10 @@
         document.getElementById("feedback-input").value = "";
 
         updateChatHistory(currentQuestion, currentAnswer);
+        // Increment question count after successful answer
+        questionCount += 1;
+        localStorage.setItem(`question_count_${clientSessionId}`, questionCount.toString());
+
         document.getElementById("user-input").value = "";
       } catch (error) {
         responseContainer.innerHTML = `<p style='color: red;'>Error: ${error.message}</p>`;
@@ -704,21 +724,12 @@
   buildScales();
   closeSurvey();
 
-  document.getElementById("end-session-btn").addEventListener("click", () => {
-    if (!termsAccepted) {
-      alert("Please accept the Terms & Conditions to use the chatbot.");
-      return;
-    }
-    openSurvey();
-  });
   
   document.getElementById("surveySkipBtn").addEventListener("click", () => {
-    // optionally still log "skipped" if you want; otherwise just close
-    closeSurvey();
-    // end session behavior: clear local history/session if desired
-    // localStorage.removeItem("client_session_id");
-    // location.reload();
+    document.getElementById("surveyStatus").textContent =
+      "Please complete the survey to continue using the chatbot.";
   });
+
   
   document.getElementById("surveyForm").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -750,12 +761,15 @@
       }
   
       status.textContent = "Thank you—survey submitted.";
+
+      // Mark survey as completed for this session
+      surveyCompleted = true;
+      localStorage.setItem(`survey_done_${clientSessionId}`, "1");
+      
       setTimeout(() => {
         closeSurvey();
-        // optional: clear session & reload
-        // localStorage.removeItem("client_session_id");
-        // location.reload();
       }, 800);
+
   
     } catch (err) {
       status.textContent = "Network error submitting survey.";
@@ -778,6 +792,7 @@
   </script>
 </body>
 </html>
+
 
 
 
