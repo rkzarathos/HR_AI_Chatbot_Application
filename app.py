@@ -380,7 +380,6 @@ TOPIC_CATALOG_TEXT = "\n".join([f'{t["code"]}: {t["label"]}' for t in TOPIC_CATA
 prompt_template = PromptTemplate(
     input_variables=["context", "question"],
     template=f"""You are an HR document interpreter for On-Target Supplies & Logistics (OTSL).
-All questions come from OTSL employees.
 
 You MUST return ONLY a single valid JSON object (no markdown, no backticks, no commentary).
 
@@ -645,6 +644,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
