@@ -123,10 +123,7 @@ TOPIC_CATALOG = [
 ]
 
 
-TOPIC_CATALOG_TEXT = "\n".join([
-    f'- {t["code"]}: {t["label"]}'
-    for t in TOPIC_CATALOG
-])
+TOPIC_CATALOG_TEXT = "\n".join([f'- {t["code"]}: {t["label"]}' for t in TOPIC_CATALOG])
 
 def _make_row_key() -> str:
     now = datetime.datetime.utcnow()
@@ -339,7 +336,7 @@ cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 chat_model = ChatOpenAI(model_name="gpt-4.1-mini", temperature=0.1)
 
 prompt_template=PromptTemplate(
-        input_variables=["context","question"],
+        input_variables=["context","question","TOPIC_CATALOG_TEXT"],
         template = """You are a document parser/interpreter for the Human Resources Department at On-Target Supplies & Logistics (or OTSL for short).\n
         All questions you get come from employees of On-Target Supplies & Logistics.
         You are given the following context information.\n
@@ -482,7 +479,7 @@ async def ask_question(request: Request):
         async def response_generator():
             try:
                 full_response = ""
-                async for chunk in llm_chain.astream({"context": context, "question": question}):
+                async for chunk in llm_chain.astream({"context": context, "question": question, "TOPIC_CATALOG_TEXT": TOPIC_CATALOG_TEXT}):
                     text_chunk = chunk.get("text", "\n")
                     full_response += text_chunk
                     yield json.dumps({"type": "text", "content": text_chunk}) + "\n\n"
@@ -618,6 +615,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
