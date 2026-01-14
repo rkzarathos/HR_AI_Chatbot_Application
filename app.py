@@ -28,7 +28,7 @@ from openpyxl import load_workbook
 import shutil
 import datetime
 import uuid
-from typing import List
+from typing import List, Optional, Dict
 from langchain.schema import Document
 from sentence_transformers import CrossEncoder
 from azure.data.tables import TableServiceClient, UpdateMode
@@ -151,7 +151,7 @@ def log_survey_to_table(session_id: str, ratings: dict) -> str:
     return row_key
 
 
-def log_chat_to_table(session_id: str, question: str, response: str, classification: dict | None = None) -> str:
+def log_chat_to_table(session_id: str, question: str, response: str, classification: Optional[Dict] = None) -> str:
     row_key = _make_row_key()
     now = datetime.datetime.utcnow().isoformat() + "Z"
 
@@ -618,6 +618,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
