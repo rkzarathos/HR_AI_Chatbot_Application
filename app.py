@@ -392,7 +392,7 @@ JSON_SCHEMA = """
 """.strip()
 
 prompt_template = PromptTemplate(
-    input_variables=["context", "question"],
+    input_variables=["context", "question", "today"],
     partial_variables={
         "topic_catalog": TOPIC_CATALOG_TEXT,
         "json_schema": JSON_SCHEMA,
@@ -403,6 +403,8 @@ You MUST return ONLY a single valid JSON object (no markdown, no backticks, no c
 
 Allowed Main Topic Codes (choose exactly ONE):
 {topic_catalog}
+
+Today's date (America/Chicago): {{today}}
 
 Context:
 ---------------------
@@ -416,6 +418,14 @@ Rules:
 - Include which team/company/department to reach out to (no personal names, no phone numbers, no addresses).
 - If a website link exists in the context and is relevant, include it in the answer.
 - End the answer with one relevant follow-up question.
+
+Date & time rules (IMPORTANT):
+- If the user asks whether something is over/ended/closed/expired or asks about deadlines, and the context contains dates:
+  - Compare the dates to {{today}} (America/Chicago).
+  - If the end date is before {{today}}, do NOT say it is ongoing; state it appears to have ended and recommend confirming with HR/Benefits for exceptions (extensions, qualifying life events).
+  - If the date range is missing a year or is ambiguous, set needs_clarification=true and ask what year/benefit period they mean.
+  - If the context dates are in the past relative to today, confidence must be ≤ 0.6 unless the context explicitly says it’s extended
+- Never contradict the dates you cite.
 
 Return JSON with this EXACT schema (all keys required):
 {json_schema}
@@ -517,7 +527,9 @@ async def ask_question(request: Request):
         context = "No relevant documents found." if not relevant_docs else "\n".join([d.page_content for d in relevant_docs])
 
         # ONE CALL: model returns JSON
-        result = await llm_chain.acall({"context": context, "question": question})
+        today_str = datetime.datetime.now().strftime("%B %d, %Y")
+        result = await llm_chain.acall({"context": context, "question": question, "today": today_str})
+
         full_text = result.get("text", "")
 
         payload = parse_llm_json(full_text)
@@ -543,6 +555,11 @@ async def ask_question(request: Request):
             "audio_url": audio_url,
             "log_id": log_id,
             "session_id": client_session_id,
+            "sources": [
+                f"Excerpt {i+1}: {d.page_content.strip()}"
+                for i, d in enumerate(relevant_docs)
+            ],
+
             "classification": {
                 "main_topic_code": payload.get("main_topic_code", ""),
                 "main_topic_label": payload.get("main_topic_label", ""),
@@ -653,6 +670,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
