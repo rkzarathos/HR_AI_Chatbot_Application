@@ -541,8 +541,7 @@ let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) ===
         const data = await response.json();
         
         // display
-        responseContainer.innerHTML = "<p><strong>Answer:</strong> </p><p id='chat-response'></p>";
-        let chatResponse = document.getElementById("chat-response");
+
         const answerText = data.answer || "";
         chatResponse.innerHTML = marked.parse(answerText);
         
@@ -774,6 +773,7 @@ let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) ===
   </script>
 </body>
 </html>
+
 
 
 
