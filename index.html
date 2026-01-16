@@ -536,66 +536,48 @@ let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) ===
         
         responseContainer.innerHTML = "<p><strong>Answer:</strong> </p><p id='chat-response'></p>";
         let chatResponse = document.getElementById("chat-response");
+
+        //---------------------------------------------------------
+        const data = await response.json();
         
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder("utf-8");
+        // display
+        responseContainer.innerHTML = "<p><strong>Answer:</strong> </p><p id='chat-response'></p>";
+        let chatResponse = document.getElementById("chat-response");
+        const answerText = data.answer || "";
+        chatResponse.innerHTML = marked.parse(answerText);
         
-        let fullResponse = "";
-        let sources = [];
-        let audioUrl = "";
-        let buffer = "";          // <--- important
-        currentLogId = "";        // reset per question
-        currentSessionId = "";
-        
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-        
-          buffer += decoder.decode(value, { stream: true });
-        
-          // Your backend uses "\n\n" between JSON objects
-          const parts = buffer.split("\n\n");
-          buffer = parts.pop(); // keep any incomplete fragment for next chunk
-        
-          for (const part of parts) {
-            const line = part.trim();
-            if (!line) continue;
-        
-            let data;
-            try {
-              data = JSON.parse(line);
-            } catch (e) {
-              console.error("NDJSON parse error. Raw part:", line);
-              continue;
-            }
-        
-            if (data.type === "text") {
-              fullResponse += (data.content || "");
-              chatResponse.innerHTML = marked.parse(fullResponse);
-            } else if (data.type === "metadata") {
-              sources = data.sources || [];
-              audioUrl = data.audio_url || "";
-              currentLogId = data.log_id || "";
-              currentSessionId = data.session_id || "";
-              console.log("METADATA received:", { currentLogId, currentSessionId });
-            } else if (data.type === "error") {
-              console.error("Server error chunk:", data);
-            }
-          }
-        }
-        
+        // audio
+        const audioUrl = data.audio_url || "";
         if (audioUrl) {
           audioPlayer.src = audioUrl;
         }
         
+        // log/session for feedback
+        currentLogId = data.log_id || "";
+        currentSessionId = data.session_id || clientSessionId;
+        
+        // doc sources (your backend doesn't send sources currently; safe no-op)
+        const sources = data.sources || [];
         if (sources.length > 0) {
-          docSources.innerHTML = "<h3>Sources:</h3>";
-          sources.forEach(source => {
-            docSources.innerHTML += `<p>${source}</p>`;
-          });
+          docSources.innerHTML = "<h3>Sources:</h3>" + sources.map(s => `<p>${s}</p>`).join("");
+        } else {
+          docSources.innerHTML = "";
         }
         
-        currentAnswer = fullResponse; // store the answer for feedback
+        // store answer for chat history + feedback
+        currentAnswer = answerText;
+        document.getElementById("feedback-status").innerHTML = "";
+        document.getElementById("feedback-input").value = "";
+        
+        updateChatHistory(currentQuestion, currentAnswer);
+        
+        // Increment question count after successful answer
+        questionCount += 1;
+        localStorage.setItem(`question_count_${clientSessionId}`, questionCount.toString());
+        
+        // clear input
+        document.getElementById("user-input").value = "";
+
         document.getElementById("feedback-status").innerHTML = "";
         document.getElementById("feedback-input").value = "";
 
@@ -792,6 +774,7 @@ let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) ===
   </script>
 </body>
 </html>
+
 
 
 
