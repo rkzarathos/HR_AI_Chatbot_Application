@@ -363,6 +363,7 @@
 
     </form>
     <div id="response-container"></div>
+    <div id="followup-container" style="margin-top:10px;"></div>
     <audio id="audio-player" controls></audio>
     <button class="collapsible">Document Sources</button>
     <div class="collapsible-content" id="document-sources"></div>
@@ -525,6 +526,7 @@ let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) ===
       responseContainer.innerHTML = "";
       audioPlayer.src = "";
       docSources.innerHTML = "";
+      document.getElementById("followup-container").innerHTML = "";
       
       responseContainer.innerHTML = "<p>Loading...</p>";
       
@@ -549,7 +551,24 @@ let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) ===
 
         const answerText = data.answer || "";
         chatResponse.innerHTML = marked.parse(answerText);
+        const followupContainer = document.getElementById("followup-container");
+        followupContainer.innerHTML = ""; // clear previous
         
+        const followUp = (data.follow_up_question || "").trim();
+        
+        if (followUp) {
+          followupContainer.innerHTML = `
+            <button type="button" id="followup-btn" style="margin-top:8px;">
+              Ask follow-up: ${followUp}
+            </button>
+          `;
+        
+          document.getElementById("followup-btn").addEventListener("click", () => {
+            document.getElementById("user-input").value = followUp;
+            // submit the form programmatically
+            document.getElementById("chat-form").dispatchEvent(new Event("submit", { cancelable: true }));
+          });
+        }
         // audio
         const audioUrl = data.audio_url || "";
         if (audioUrl) {
@@ -768,6 +787,7 @@ let surveyCompleted = localStorage.getItem(`survey_done_${clientSessionId}`) ===
   </script>
 </body>
 </html>
+
 
 
 
