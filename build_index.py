@@ -144,8 +144,8 @@ print(f"Collected {len(datasource)} documents/pages")
 # ========================
 
 text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-    chunk_size=800,
-    chunk_overlap=200,
+    chunk_size=1200,
+    chunk_overlap=400,
 )
 docs = text_splitter.split_documents(datasource)
 print(f"Split into {len(docs)} chunks")
