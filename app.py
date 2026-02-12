@@ -416,7 +416,7 @@ Question: {question}
 
 Rules:
 - Use ONLY the context. If the context does not contain the answer, say so in the answer and suggest whom to contact.
-- Include which team/company/department to reach out to (no phone numbers, no addresses).
+- Include which team/company/department to reach out to along with their phone number and/or email addresses (no personnel names).
 - If a website link exists in the context and is relevant, include it in the answer.
 - End the answer with one relevant follow-up question.
 
@@ -678,6 +678,7 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
 
 
 
