@@ -29,7 +29,7 @@
       justify-content: flex-start;
       align-items: center;
       min-height: 100dvh;
-      background-color: #121212;
+      background-color: #000000;
       color: white;
       text-align: center;
       flex-direction: column;
@@ -93,7 +93,7 @@
       align-items: center;
       gap: 12px;
       padding: 8px 0 14px;
-      background: rgba(18,18,18,0.96);
+      background: rgba(0,0,0,0.96);
       backdrop-filter: blur(8px);
       transition: max-height 0.28s ease, opacity 0.28s ease, margin 0.28s ease, padding 0.28s ease, transform 0.28s ease;
       opacity: 1;
@@ -211,7 +211,7 @@
     }
 
     .dash-image {
-      width: 120px;
+      width: 150px;
       height: auto;
       display: block;
       transition: opacity 0.2s ease;
@@ -785,7 +785,7 @@
       }
 
       .dash-image {
-        width: 100px;
+        width: 132px;
       }
 
       .question-buttons {
@@ -842,7 +842,7 @@
       }
 
       .dash-image {
-        width: 90px;
+        width: 118px;
       }
 
       .input-container {
@@ -928,7 +928,7 @@
     </div>
 
     <div class="dash-image-wrapper">
-      <img src="/dash-dark" id="dash-image" alt="DASH robot" class="dash-image">
+      <img src="/dash-dark?v=2" id="dash-image" alt="DASH robot" class="dash-image">
     </div>
   </div>
 
@@ -1177,22 +1177,27 @@
       }
     }
 
+    function syncDashImage() {
+      const dashImg = document.getElementById("dash-image");
+      if (!dashImg) return;
+
+      const isLight = document.body.classList.contains("light-mode");
+      dashImg.src = isLight
+        ? "/dash-light?v=2"
+        : "/dash-dark?v=2";
+    }
+
     lockBodyScroll();
 
     document.querySelector(".theme-toggle").addEventListener("click", function() {
       document.body.classList.toggle("light-mode");
 
-      const isLight = document.body.classList.contains("light-mode");
       const dashImg = document.getElementById("dash-image");
-
       if (dashImg) {
         dashImg.style.opacity = 0;
 
         setTimeout(() => {
-          dashImg.src = isLight
-            ? "/dash-light"
-            : "/dash-dark";
-
+          syncDashImage();
           dashImg.style.opacity = 1;
         }, 120);
       }
@@ -1529,14 +1534,7 @@
     closeSurvey();
 
     window.addEventListener("DOMContentLoaded", () => {
-      const isLight = document.body.classList.contains("light-mode");
-      const dashImg = document.getElementById("dash-image");
-
-      if (dashImg) {
-        dashImg.src = isLight
-          ? "/static/dash-light.png"
-          : "/static/dash-dark.png";
-      }
+      syncDashImage();
     });
 
     document.getElementById("surveyForm").addEventListener("submit", async (e) => {
