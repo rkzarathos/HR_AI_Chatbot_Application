@@ -543,7 +543,7 @@ retriever = vectorstore.as_retriever(
 session_data = {}
 
 @app.get("/dash")
-async def get_logo():
+async def get_dash():
     # Adjust the file name as needed.
     dash_path = os.path.join(DOCUMENTS_DIR, "dash image.png")
     if not os.path.exists(dash_path):
@@ -551,7 +551,7 @@ async def get_logo():
     return FileResponse(dash_path, media_type="image/png")
 
 @app.get("/thinking-gif")
-async def get_logo():
+async def get_thinking_gif():
     # Adjust the file name as needed.
     thinking_path = os.path.join(DOCUMENTS_DIR, "thinking-gif.mp4")
     if not os.path.exists(thinking_path):
