@@ -214,6 +214,7 @@
       width: 120px;
       height: auto;
       display: block;
+      transition: opacity 0.2s ease;
     }
 
     h1 {
@@ -927,7 +928,7 @@
     </div>
 
     <div class="dash-image-wrapper">
-      <img src="/dash" alt="DASH robot" class="dash-image">
+      <img src="/dash-dark.png" id="dash-image" alt="DASH robot" class="dash-image">
     </div>
   </div>
 
@@ -1007,7 +1008,7 @@
         playsinline
         preload="auto"
       >
-        <source src="/thinking-gif" type="video/mp4">
+        <source src="/static/thinking-ai.mp4" type="video/mp4">
         Your browser does not support the video tag.
       </video>
     </div>
@@ -1180,6 +1181,21 @@
 
     document.querySelector(".theme-toggle").addEventListener("click", function() {
       document.body.classList.toggle("light-mode");
+
+      const isLight = document.body.classList.contains("light-mode");
+      const dashImg = document.getElementById("dash-image");
+
+      if (dashImg) {
+        dashImg.style.opacity = 0;
+
+        setTimeout(() => {
+          dashImg.src = isLight
+            ? "/dash-light.png"
+            : "/dash-dark.png";
+
+          dashImg.style.opacity = 1;
+        }, 120);
+      }
     });
 
     const topbarShell = document.getElementById("topbar-shell");
@@ -1511,6 +1527,17 @@
 
     buildScales();
     closeSurvey();
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const isLight = document.body.classList.contains("light-mode");
+      const dashImg = document.getElementById("dash-image");
+
+      if (dashImg) {
+        dashImg.src = isLight
+          ? "/static/dash-light.png"
+          : "/static/dash-dark.png";
+      }
+    });
 
     document.getElementById("surveyForm").addEventListener("submit", async (e) => {
       e.preventDefault();
