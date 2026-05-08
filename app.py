@@ -373,7 +373,7 @@ cross_encoder = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
 
 # Initialize Chat Model
 
-chat_model = ChatOpenAI(model_name="gpt-4.1-mini", temperature=0.1)
+chat_model = ChatOpenAI(model_name="gpt-5.4-mini", temperature=0.1)
 
 TOPIC_CATALOG_TEXT = "\n".join([f'{t["code"]}: {t["label"]}' for t in TOPIC_CATALOG])
 
