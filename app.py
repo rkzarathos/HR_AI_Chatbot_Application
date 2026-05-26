@@ -364,7 +364,7 @@ AUDIO_DIR = os.getenv("AUDIO_PATH", os.path.join(os.getcwd(), "audio"))
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
 
-CHROMA_DB_PATH = os.getenv("CHROMADB_PATH", "./chromadb")
+CHROMA_DB_PATH = os.getenv("CHROMADB_PATH", "/chromadb")
 os.makedirs(CHROMA_DB_PATH, exist_ok=True)
 
 embedding_function = OpenAIEmbeddings(openai_api_key=openai_api_key)
