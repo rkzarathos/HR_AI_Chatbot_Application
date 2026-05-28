@@ -38,29 +38,20 @@ from dataclasses import dataclass
 from pathlib import Path
 import pageindex.utils as pi_utils
 
-session_id = str(uuid.uuid4())
 
+#try:
+#    from dotenv import load_dotenv
+#    load_dotenv()
+#except Exception:
+#    pass
+
+
+session_id = str(uuid.uuid4())
 azure_connection_string = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
-# print("AZURE_STORAGE_CONNECTION_STRING: ",azure_connection_string)
 if not azure_connection_string:
     raise ValueError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set.")
 
 blob_service_client = BlobServiceClient.from_connection_string(azure_connection_string)
-
-#try:
-#    blob_service_client.create_container(AUDIO_CONTAINER)
-#except Exception as e:
-#    print("Audio container likely exists:", e)
-
-#try:
-#    blob_service_client.create_container(CHAT_CONTAINER)
-#except Exception as e:
-#    print("Chat history container likely exists:", e)
-
-
-
-# CHAT_LOG_DIR = os.getenv("CHATHISTORY_PATH", os.path.join(os.getcwd(), "chathistory"))
-# CHAT_HISTORY_FILE = os.path.join(CHAT_LOG_DIR, f"{session_id}_chat_history.xlsx")
 
 # 1. FIRST create the service client
 service_client = TableServiceClient.from_connection_string(
@@ -161,7 +152,7 @@ def log_chat_to_table(
 ) -> str:
     row_key = _make_row_key()
     now = datetime.datetime.utcnow().isoformat() + "Z"
-
+    
     entity = {
         "PartitionKey": session_id,
         "RowKey": row_key,
@@ -485,7 +476,23 @@ JSON requirements:
 - confidence must be between 0 and 1.
 - alternate_topics must contain 0–3 items.
 - follow_up_question must be a single relevant question ending with "?".
-- follow_up_question should be phrased as a natural question the user might ask next.
+- follow_up_question rules:
+    - The follow_up_question must be written in the user's voice, as if the user is asking the next question.
+    - Do not write assistant-offer phrasing.
+    - Do not start with phrases like:
+    - "Would you like me to..."
+    - "Do you want me to..."
+    - "Can I help you..."
+    - "Should I..."
+    - "Would you like help..."
+    - Good examples:
+        - "Who should I contact about 401(k) questions?"
+        - "How do I enroll in the 401(k) plan?"
+        - "Where can I find my 401(k) contribution information?"
+    - Bad examples:
+        - "Would you like me to help you find the HR team for 401(k) questions?"
+        - "Do you want me to explain the 401(k) process?"
+        - "Should I help you contact HR?"
 - Use double quotes.
 - Do not include trailing commas.
 - Escape quotes and newlines properly.
@@ -588,7 +595,23 @@ JSON requirements:
 - confidence must be between 0 and 1.
 - alternate_topics must contain 0–3 items.
 - follow_up_question must be a single relevant question ending with "?".
-- follow_up_question should be phrased as a natural question the user might ask next.
+- follow_up_question rules:
+    - The follow_up_question must be written in the user's voice, as if the user is asking the next question.
+    - Do not write assistant-offer phrasing.
+    - Do not start with phrases like:
+    - "Would you like me to..."
+    - "Do you want me to..."
+    - "Can I help you..."
+    - "Should I..."
+    - "Would you like help..."
+    - Good examples:
+        - "Who should I contact about 401(k) questions?"
+        - "How do I enroll in the 401(k) plan?"
+        - "Where can I find my 401(k) contribution information?"
+    - Bad examples:
+        - "Would you like me to help you find the HR team for 401(k) questions?"
+        - "Do you want me to explain the 401(k) process?"
+        - "Should I help you contact HR?"
 - Use double quotes.
 - Do not include trailing commas.
 - Escape quotes and newlines properly.
@@ -619,16 +642,16 @@ PageIndex document forest:
 {document_forest}
 
 Return this exact JSON shape:
-{
+{{
   "thinking": "brief explanation of why these nodes were selected",
   "confidence": 0.0,
   "node_list": [
-    {
+    {{
       "doc_name": "exact document name from the forest",
       "node_id": "exact node_id copied from the tree"
-    }
+    }}
   ]
-}
+}}
 
 Rules:
 - The doc_name must be copied exactly from the provided forest.
@@ -696,6 +719,20 @@ class RetrievalResult:
     sources: List[str]
     metadata: Dict[str, Any]
 
+def make_source_excerpt(text: str, max_chars: int = 450) -> str:
+    """
+    Creates a clean text excerpt for the frontend Document Sources panel.
+    Does not include document name, page number, or node ID.
+    """
+    if not text:
+        return ""
+
+    clean = re.sub(r"\s+", " ", str(text)).strip()
+
+    if len(clean) <= max_chars:
+        return clean
+
+    return clean[:max_chars].rstrip() + "..."
 
 def load_pageindex_documents() -> List[Dict[str, Any]]:
     """
@@ -906,10 +943,10 @@ def build_pageindex_context_from_matches(matches: List[Dict[str, Any]]) -> Retri
             f"{selected_text}"
         )
 
-        source_label = f"{doc_name} — page {page}" if page != "" else f"{doc_name} — {title}"
+        source_excerpt = make_source_excerpt(selected_text)
 
-        if source_label not in sources:
-            sources.append(source_label)
+        if source_excerpt and source_excerpt not in sources:
+            sources.append(source_excerpt)
 
         total_chars += len(selected_text)
 
@@ -1058,7 +1095,7 @@ async def run_pageindex_retrieval(question: str) -> RetrievalResult:
 
         # Convert selected node IDs into actual answer context.
         retrieval_result = build_pageindex_context_from_matches(
-            parsed.get("matches", [])
+            parsed.get("node_list", [])
         )
 
         retrieval_result.confidence = float(parsed.get("confidence", 0.0) or 0.0)
@@ -1149,8 +1186,10 @@ async def run_chroma_crossencoder_retrieval(question: str) -> RetrievalResult:
                 f"[Source: {source_label}]\n{doc.page_content}"
             )
 
-            if source_label not in sources:
-                sources.append(source_label)
+            source_excerpt = make_source_excerpt(doc.page_content)
+
+            if source_excerpt and source_excerpt not in sources:
+                sources.append(source_excerpt)
 
         return RetrievalResult(
             index_source="Chroma Index",
@@ -1397,25 +1436,6 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
