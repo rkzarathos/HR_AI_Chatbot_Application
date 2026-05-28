@@ -15,6 +15,12 @@ from azure.core.credentials import AzureKeyCredential
 # ENV / CONFIG
 # ========================
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 openai_api_key = os.getenv("OPENAI_API_KEY")
 if not openai_api_key:
     raise ValueError("OPENAI_API_KEY environment variable is not set.")
