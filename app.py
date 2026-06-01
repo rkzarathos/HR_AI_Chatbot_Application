@@ -1515,42 +1515,93 @@ async def ask_question(request: Request):
         return JSONResponse(content={"error": "No question provided"}, status_code=400)
 
     try:
+
         # Start BOTH immediately.
         page_task = asyncio.create_task(run_pageindex_retrieval(question))
         chroma_task = asyncio.create_task(run_chroma_crossencoder_retrieval(question))
-
-        # Wait for PageIndex FIRST because it is the fast gate.
-        try:
-            page_result = await page_task
-        except Exception as e:
-            print(f"PageIndex retrieval failed; falling back to Chroma. Error: {e}")
-            page_result = RetrievalResult(
-                index_source="Page Index",
-                confidence=0.0,
-                context="No relevant documents found.",
-                sources=[],
-                metadata={"error": str(e)},
-            )
-
-        # PageIndex wins only if confidence is above 0.90.
-        if page_result.confidence > PAGEINDEX_CONFIDENCE_THRESHOLD:
-            selected_result = page_result
-            index_source = "Page Index"
-
-            # Chroma may still be running. Cancel it because we don't need it.
-            if not chroma_task.done():
-                chroma_task.cancel()
+        
+        selected_result = None
+        index_source = None
+        
+        # Wait for whichever retrieval path finishes first.
+        done, pending = await asyncio.wait(
+            {page_task, chroma_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        
+        first_task = next(iter(done))
+        
+        # CASE 1: Chroma finishes first.
+        # Return Chroma immediately. Do not wait for PageIndex confidence.
+        if first_task is chroma_task:
+            try:
+                selected_result = chroma_task.result()
+            except Exception as e:
+                print(f"Chroma retrieval failed first. Waiting for PageIndex fallback. Error: {e}")
                 try:
-                    await chroma_task
+                    page_result = await page_task
+                except Exception as page_error:
+                    print(f"PageIndex fallback also failed: {page_error}")
+                    raise page_error
+        
+                if page_result.confidence > PAGEINDEX_CONFIDENCE_THRESHOLD:
+                    selected_result = page_result
+                    index_source = "Page Index"
+                else:
+                    selected_result = RetrievalResult(
+                        index_source="Chroma Index",
+                        confidence=0.0,
+                        context="No relevant documents found.",
+                        sources=[],
+                        metadata={
+                            "reason": "both_retrieval_paths_failed_or_low_confidence",
+                            "chroma_error": str(e),
+                        },
+                    )
+                    index_source = "Chroma Index"
+        
+            if index_source is None:
+                index_source = "Chroma Index"
+        
+            # PageIndex is slower, so cancel/ignore it.
+            if not page_task.done():
+                page_task.cancel()
+                try:
+                    await page_task
                 except asyncio.CancelledError:
                     pass
                 except Exception:
                     pass
-
+        
+        # CASE 2: PageIndex finishes first.
         else:
-            # PageIndex was not confident enough, so now wait for Chroma.
-            selected_result = await chroma_task
-            index_source = "Chroma Index"
+            try:
+                page_result = page_task.result()
+            except Exception as e:
+                print(f"PageIndex retrieval failed first. Waiting for Chroma fallback. Error: {e}")
+                selected_result = await chroma_task
+                index_source = "Chroma Index"
+        
+            else:
+                if page_result.confidence > PAGEINDEX_CONFIDENCE_THRESHOLD:
+                    selected_result = page_result
+                    index_source = "Page Index"
+        
+                    # PageIndex won, so cancel/ignore Chroma.
+                    if not chroma_task.done():
+                        chroma_task.cancel()
+                        try:
+                            await chroma_task
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:
+                            pass
+        
+                else:
+                    # PageIndex was fast but not confident enough.
+                    # Use Chroma fallback.
+                    selected_result = await chroma_task
+                    index_source = "Chroma Index"
 
         today_str = datetime.datetime.now().strftime("%B %d, %Y")
 
