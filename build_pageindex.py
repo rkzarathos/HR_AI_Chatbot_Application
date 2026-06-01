@@ -25,8 +25,6 @@ PAGEINDEX_API_KEY = os.getenv("PAGEINDEX_API_KEY")
 if not PAGEINDEX_API_KEY:
     raise ValueError("PAGEINDEX_API_KEY environment variable is not set.")
 
-PAGEINDEX_KEY_1_PAGE_SWITCH_THRESHOLD = 150
-
 DOCUMENTS_DIR = Path(
     os.getenv("DOCUMENTS_PATH", Path.cwd() / "documents")
 ).resolve()
@@ -40,35 +38,15 @@ PAGEINDEX_TREES_DIR = PAGEINDEX_MANIFEST_DIR / "pageindex_trees"
 
 PRINT_TREES_TO_LOG = False
 
-POLL_INTERVAL_SECONDS = 5
-MAX_POLLS_PER_DOCUMENT = 120  # 10 minutes per document
+POLL_INTERVAL_SECONDS = 20
+MAX_POLLS_PER_DOCUMENT = 360  # 10 minutes per document
 
 # ========================
 # DOCUMENT LIST
 # ========================
 
 DOCUMENTS = [
-    "2026 Employee Handbook.pdf",
-    "BUILDING ACCESS POLICY.pdf",
-    "Curative Onboarding Steps.pdf",
-    "Curative Pharmacy Need to Know.pdf",
-    "Curative Registration.pdf",
-    "Curative Services.pdf",
-    "ExponentHR 401K Enrollment.pdf",
-    "ExponentHR Obtaining Year End Forms - W2 and 1095-C.pdf",
-    "ExponentHR Pay Checks and Direct Deposit.pdf",
-    "FMLA Claim Submission Checklist.pdf",
-    "FMLA Policy.pdf",
-    "Fidelity NetBenefits Registration.pdf",
-    "Gallagher Team contact information.pdf",
-    "HR Frequently Asked Questions.pdf",
-    "OTSL 401K Guidlines.pdf",
-    "OTSL Employee Referral Form.pdf",
-    "OTSL Out of State Employee Benefits.pdf",
-    "OTSL Performace Management Module.pdf",
-    "OTSL Profit Sharing Plan.pdf",
-    "Reporting Time in ExponentHR.pdf",
-    "2026 Benefits Enrollment - old.pdf",
+    "All OTSL Docs.pdf",
 ]
 
 
