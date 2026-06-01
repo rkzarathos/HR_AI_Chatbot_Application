@@ -620,6 +620,58 @@ JSON requirements:
 
 pageindex_answer_chain = LLMChain(llm=chat_model,prompt=pageindex_answer_prompt,)
 
+pageindex_section_search_prompt = PromptTemplate(
+    input_variables=["question", "section_overview"],
+    template="""You are a PageIndex section router for an HR policy chatbot.
+
+You are given:
+1. A user's HR question.
+2. A compact top-level PageIndex tree overview.
+
+Your job:
+- Select the smallest set of top-level sections/subtrees likely to contain the answer.
+- Do not answer the user's question.
+- Return ONLY strict JSON.
+- Be conservative with confidence.
+
+Question:
+{question}
+
+Top-level PageIndex section overview:
+{section_overview}
+
+Return this exact JSON shape:
+{{
+  "thinking": "brief explanation of why these sections were selected",
+  "confidence": 0.0,
+  "node_list": [
+    {{
+      "doc_name": "exact document name from the overview",
+      "node_id": "exact node_id copied from the overview"
+    }}
+  ]
+}}
+
+Rules:
+- The doc_name must be copied exactly from the overview.
+- The node_id must be copied exactly from the overview.
+- Do not invent, shorten, rewrite, or infer node IDs.
+- If the answer may require multiple sections, return multiple section nodes.
+- Prefer specific top-level sections over the entire document.
+- Use confidence > 0.90 only when the selected section title/summary strongly matches the user's question.
+- Use confidence 0.70-0.90 when likely relevant but not certain.
+- Use confidence 0.40-0.70 when the question is broad, ambiguous, or only partially matched.
+- Use confidence < 0.40 when no clear section is found.
+- If no clear section is found, return an empty node_list.
+- Output must be valid JSON only.
+"""
+)
+
+pageindex_section_search_chain = LLMChain(
+    llm=chat_model,
+    prompt=pageindex_section_search_prompt,
+)
+
 pageindex_search_prompt = PromptTemplate(
     input_variables=["question", "document_forest"],
     template="""You are a PageIndex tree-search router for an HR policy chatbot.
@@ -638,7 +690,7 @@ Your job:
 Question:
 {question}
 
-PageIndex document forest:
+Selected PageIndex subtree forest:
 {document_forest}
 
 Return this exact JSON shape:
@@ -654,6 +706,10 @@ Return this exact JSON shape:
 }}
 
 Rules:
+- Search only inside the selected subtree forest.
+- Return exact answer-bearing nodes, not just broad parent sections.
+- If a broad parent section and a precise child node both appear relevant, prefer the precise child node.
+- If the user's question requires information from more than one subsection, return multiple node IDs.
 - The doc_name must be copied exactly from the provided forest.
 - The node_id must be copied exactly from the provided tree.
 - Do not invent, shorten, rewrite, or infer node IDs.
@@ -667,6 +723,8 @@ Rules:
 )
 
 pageindex_search_chain = LLMChain(llm=chat_model,prompt=pageindex_search_prompt,)
+
+
 
 def crossencoder_rerank_docs(
     question: str,
@@ -781,28 +839,94 @@ def load_pageindex_documents() -> List[Dict[str, Any]]:
         print(f"WARNING: Failed to load local PageIndex trees: {e}")
         return []
 
-
-
-def compact_pageindex_tree(node: Any) -> Any:
+def get_pageindex_node_by_id(
+    tree: Dict[str, Any],
+    node_id: Any,
+) -> Optional[Dict[str, Any]]:
     """
-    Creates a compact tree for the PageIndex search prompt.
-    Keeps title, node_id, page_index, and summaries.
-    Removes full text from the search prompt.
+    Finds a PageIndex node by node_id using create_node_mapping().
+    Handles string/int node_id mismatches.
+    """
+    if node_id is None:
+        return None
+
+    try:
+        node_map = pi_utils.create_node_mapping(tree)
+
+        node = node_map.get(node_id) or node_map.get(str(node_id))
+
+        if not node:
+            try:
+                node = node_map.get(int(node_id))
+            except Exception:
+                node = None
+
+        return node
+
+    except Exception as e:
+        print(f"WARNING: Could not create PageIndex node mapping: {e}")
+        return None
+
+
+def compact_pageindex_tree(
+    node: Any,
+    max_depth: Optional[int] = None,
+    current_depth: int = 0,
+    max_summary_chars: int = 600,
+) -> Any:
+    """
+    Creates a compact tree for PageIndex search prompts.
+
+    Keeps only:
+    - title
+    - node_id
+    - page_index
+    - summary
+
+    Intentionally removes:
+    - text
+    - prefix_summary
+
+    max_depth:
+    - None = keep all descendants
+    - 1/2/etc. = keep only that many tree levels
     """
     if isinstance(node, list):
-        return [compact_pageindex_tree(n) for n in node]
+        return [
+            compact_pageindex_tree(
+                n,
+                max_depth=max_depth,
+                current_depth=current_depth,
+                max_summary_chars=max_summary_chars,
+            )
+            for n in node
+        ]
 
     if not isinstance(node, dict):
         return node
 
     compact = {}
 
-    for key in ["title", "node_id", "page_index", "summary", "prefix_summary"]:
+    for key in ["title", "node_id", "page_index", "summary"]:
         if key in node:
-            compact[key] = node.get(key)
+            value = node.get(key)
 
-    if "nodes" in node and isinstance(node["nodes"], list):
-        compact["nodes"] = [compact_pageindex_tree(child) for child in node["nodes"]]
+            if key == "summary" and isinstance(value, str) and len(value) > max_summary_chars:
+                value = value[:max_summary_chars].rstrip() + "..."
+
+            compact[key] = value
+
+    if max_depth is None or current_depth < max_depth:
+        if "nodes" in node and isinstance(node["nodes"], list):
+            compact["nodes"] = [
+                compact_pageindex_tree(
+                    child,
+                    max_depth=max_depth,
+                    current_depth=current_depth + 1,
+                    max_summary_chars=max_summary_chars,
+                )
+                for child in node["nodes"]
+            ]
 
     return compact
 
@@ -810,6 +934,11 @@ def compact_pageindex_tree(node: Any) -> Any:
 def build_pageindex_forest_for_prompt() -> List[Dict[str, Any]]:
     """
     Builds a compact multi-document PageIndex forest for node selection.
+
+    This is now mainly a fallback/debug helper.
+    The normal path should use:
+    build_pageindex_section_overview_for_prompt()
+    then build_selected_pageindex_subtrees_for_prompt().
     """
     forest = []
 
@@ -821,7 +950,7 @@ def build_pageindex_forest_for_prompt() -> List[Dict[str, Any]]:
         try:
             tree_without_text = pi_utils.remove_fields(
                 copy.deepcopy(tree),
-                fields=["text"],
+                fields=["text", "prefix_summary"],
             )
         except Exception:
             tree_without_text = copy.deepcopy(tree)
@@ -830,12 +959,117 @@ def build_pageindex_forest_for_prompt() -> List[Dict[str, Any]]:
             {
                 "doc_name": doc["doc_name"],
                 "doc_id": doc["doc_id"],
-                "tree": compact_pageindex_tree(tree_without_text),
+                "tree": compact_pageindex_tree(
+                    tree_without_text,
+                    max_depth=None,
+                    max_summary_chars=600,
+                ),
             }
         )
 
     return forest
 
+def build_pageindex_section_overview_for_prompt() -> List[Dict[str, Any]]:
+    """
+    Builds a lightweight top-level section overview.
+
+    This is Step 1 of the two-step search.
+    It includes only the root and shallow children, not the full tree.
+    """
+    overview = []
+
+    for doc in pageindex_documents:
+        tree = doc.get("tree")
+        if not tree:
+            continue
+
+        try:
+            tree_without_text = pi_utils.remove_fields(
+                copy.deepcopy(tree),
+                fields=["text", "prefix_summary"],
+            )
+        except Exception:
+            tree_without_text = copy.deepcopy(tree)
+
+        overview.append(
+            {
+                "doc_name": doc["doc_name"],
+                "doc_id": doc["doc_id"],
+                "tree": compact_pageindex_tree(
+                    tree_without_text,
+                    max_depth=2,
+                    max_summary_chars=500,
+                ),
+            }
+        )
+
+    return overview
+
+
+def build_selected_pageindex_subtrees_for_prompt(
+    selected_sections: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """
+    Builds a compact subtree forest from the section nodes selected in Step 1.
+
+    This is Step 2 input.
+    """
+    if not selected_sections:
+        return []
+
+    docs_by_name = {
+        doc["doc_name"]: doc
+        for doc in pageindex_documents
+    }
+
+    subtree_forest = []
+
+    for selected in selected_sections:
+        doc_name = selected.get("doc_name")
+        node_id = selected.get("node_id")
+
+        if not doc_name or not node_id:
+            continue
+
+        doc = docs_by_name.get(doc_name)
+        if not doc:
+            continue
+
+        tree = doc.get("tree")
+        if not tree:
+            continue
+
+        selected_node = get_pageindex_node_by_id(tree, node_id)
+
+        if not selected_node:
+            print(
+                f"WARNING: Selected section node not found. "
+                f"doc_name={doc_name}, node_id={node_id}"
+            )
+            continue
+
+        try:
+            selected_node_without_text = pi_utils.remove_fields(
+                copy.deepcopy(selected_node),
+                fields=["text", "prefix_summary"],
+            )
+        except Exception:
+            selected_node_without_text = copy.deepcopy(selected_node)
+
+        subtree_forest.append(
+            {
+                "doc_name": doc_name,
+                "doc_id": doc.get("doc_id"),
+                "selected_section_node_id": node_id,
+                "tree": compact_pageindex_tree(
+                    selected_node_without_text,
+                    max_depth=None,
+                    max_summary_chars=600,
+                ),
+            }
+        )
+
+    return subtree_forest
 
 def parse_pageindex_search_json(raw_text: str) -> Dict[str, Any]:
     parsed = parse_llm_json(raw_text)
@@ -903,18 +1137,7 @@ def build_pageindex_context_from_matches(matches: List[Dict[str, Any]]) -> Retri
         if not doc:
             continue
 
-        try:
-            node_map = pi_utils.create_node_mapping(doc["tree"])
-            node = node_map.get(node_id) or node_map.get(str(node_id))
-            
-            if not node:
-                try:
-                    node = node_map.get(int(node_id))
-                except Exception:
-                    node = None
-        except Exception as e:
-            print(f"WARNING: Could not create PageIndex node map for {doc_name}: {e}")
-            node = None
+        node = get_pageindex_node_by_id(doc["tree"], node_id)
 
         if not node:
             continue
@@ -991,6 +1214,20 @@ def build_chroma_source_label(doc: Document) -> str:
 
 pageindex_documents = load_pageindex_documents()
 
+def log_pageindex_prompt_sizes() -> None:
+    try:
+        overview = build_pageindex_section_overview_for_prompt()
+        overview_json = json.dumps(overview, ensure_ascii=False)
+        print(
+            f"PageIndex section overview size: "
+            f"{len(overview_json):,} chars / approx {len(overview_json) // 4:,} tokens"
+        )
+    except Exception as e:
+        print(f"Could not estimate PageIndex overview size: {e}")
+
+
+log_pageindex_prompt_sizes()
+
 # Session-based storage
 session_data = {}
 
@@ -1037,18 +1274,18 @@ async def generate_audio(text: str, filename: str):
 
 async def run_pageindex_retrieval(question: str) -> RetrievalResult:
     """
-    PageIndex retrieval path.
+    PageIndex retrieval path using two-step local tree search.
 
-    Purpose:
-    - Uses locally saved PageIndex tree JSON files.
-    - Uses the PageIndex search chain to select likely nodes.
-    - Builds context from selected PageIndex nodes.
-    - Returns a RetrievalResult with confidence.
+    Step 1:
+    - Send top-level section overview.
+    - Select relevant section/subtree nodes.
 
-    Important:
-    - This function does NOT call Chroma.
-    - This function does NOT call CrossEncoder.
-    - This function does NOT generate the final user answer.
+    Step 2:
+    - Send only selected subtrees.
+    - Select exact answer-bearing node IDs.
+
+    Step 3:
+    - Recover full node text locally.
     """
 
     if not pageindex_documents:
@@ -1061,38 +1298,92 @@ async def run_pageindex_retrieval(question: str) -> RetrievalResult:
         )
 
     try:
-        forest = build_pageindex_forest_for_prompt()
+        # ------------------------
+        # Step 1: Section selection
+        # ------------------------
+        section_overview = build_pageindex_section_overview_for_prompt()
 
-        if not forest:
+        if not section_overview:
             return RetrievalResult(
                 index_source="Page Index",
                 confidence=0.0,
                 context="No relevant documents found.",
                 sources=[],
-                metadata={"reason": "empty_pageindex_forest"},
+                metadata={"reason": "empty_pageindex_section_overview"},
             )
 
-        # PageIndex tree-search step only.
-        # This selects likely nodes and assigns PageIndex confidence.
-        result = await pageindex_search_chain.acall(
+        section_result = await pageindex_section_search_chain.acall(
             {
                 "question": question,
-                "document_forest": json.dumps(forest, ensure_ascii=False),
+                "section_overview": json.dumps(section_overview, ensure_ascii=False),
             }
         )
 
-        raw_text = result.get("text", "")
-        parsed = parse_pageindex_search_json(raw_text)
+        raw_section_text = section_result.get("text", "")
+        parsed_sections = parse_pageindex_search_json(raw_section_text)
 
-        # Convert selected node IDs into actual answer context.
-        retrieval_result = build_pageindex_context_from_matches(
-            parsed.get("node_list", [])
+        selected_sections = parsed_sections.get("node_list", [])
+        section_confidence = float(parsed_sections.get("confidence", 0.0) or 0.0)
+
+        if not selected_sections:
+            return RetrievalResult(
+                index_source="Page Index",
+                confidence=0.0,
+                context="No relevant documents found.",
+                sources=[],
+                metadata={
+                    "reason": "no_pageindex_sections_selected",
+                    "section_thinking": parsed_sections.get("thinking", ""),
+                    "raw_section_search": raw_section_text,
+                },
+            )
+
+        # ------------------------
+        # Step 2: Exact node search
+        # ------------------------
+        subtree_forest = build_selected_pageindex_subtrees_for_prompt(
+            selected_sections
         )
 
-        retrieval_result.confidence = float(parsed.get("confidence", 0.0) or 0.0)
+        if not subtree_forest:
+            return RetrievalResult(
+                index_source="Page Index",
+                confidence=0.0,
+                context="No relevant documents found.",
+                sources=[],
+                metadata={
+                    "reason": "empty_selected_pageindex_subtrees",
+                    "selected_sections": selected_sections,
+                    "section_thinking": parsed_sections.get("thinking", ""),
+                },
+            )
+
+        node_result = await pageindex_search_chain.acall(
+            {
+                "question": question,
+                "document_forest": json.dumps(subtree_forest, ensure_ascii=False),
+            }
+        )
+
+        raw_node_text = node_result.get("text", "")
+        parsed_nodes = parse_pageindex_search_json(raw_node_text)
+
+        selected_nodes = parsed_nodes.get("node_list", [])
+        node_confidence = float(parsed_nodes.get("confidence", 0.0) or 0.0)
+
+        retrieval_result = build_pageindex_context_from_matches(selected_nodes)
+
+        # Combine confidence conservatively.
+        retrieval_result.confidence = min(section_confidence, node_confidence)
         retrieval_result.index_source = "Page Index"
-        retrieval_result.metadata["thinking"] = parsed.get("thinking", "")
-        retrieval_result.metadata["raw_tree_search"] = raw_text
+        retrieval_result.metadata["section_confidence"] = section_confidence
+        retrieval_result.metadata["node_confidence"] = node_confidence
+        retrieval_result.metadata["section_thinking"] = parsed_sections.get("thinking", "")
+        retrieval_result.metadata["node_thinking"] = parsed_nodes.get("thinking", "")
+        retrieval_result.metadata["raw_section_search"] = raw_section_text
+        retrieval_result.metadata["raw_node_search"] = raw_node_text
+        retrieval_result.metadata["selected_sections"] = selected_sections
+        retrieval_result.metadata["selected_nodes"] = selected_nodes
 
         return retrieval_result
 
@@ -1109,7 +1400,7 @@ async def run_pageindex_retrieval(question: str) -> RetrievalResult:
                 "error": str(e),
             },
         )
-
+        
 async def run_chroma_crossencoder_retrieval(question: str) -> RetrievalResult:
     """
     Chroma + CrossEncoder retrieval path.
