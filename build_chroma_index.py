@@ -1,5 +1,7 @@
 import os
 import re
+import shutil
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -7,7 +9,6 @@ import pandas as pd
 from langchain.embeddings.openai import OpenAIEmbeddings
 from langchain.vectorstores import Chroma
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PDFMinerLoader, PyMuPDFLoader
 from langchain.schema import Document
 
 # --- Azure Document Intelligence imports ---
@@ -43,6 +44,20 @@ PAGE_METADATA_XLSX_PATH = os.getenv(
 )
 PAGE_METADATA_SHEET_NAME = os.getenv("PAGE_METADATA_SHEET_NAME", "Page Breakdown")
 
+# OCR-only build settings.
+# This script intentionally skips PDFMiner/PyMuPDF and sends every PDF to Azure OCR.
+AZURE_OCR_MODEL_ID = os.getenv("AZURE_OCR_MODEL_ID", "prebuilt-read")
+
+# Keep low enough for F0/free tier safety. 4 seconds = max 15 calls/min.
+AZURE_OCR_MIN_SECONDS_BETWEEN_CALLS = float(
+    os.getenv("AZURE_OCR_MIN_SECONDS_BETWEEN_CALLS", "4")
+)
+
+# When true, deletes the existing Chroma directory before rebuilding.
+RESET_CHROMA_DB = os.getenv("RESET_CHROMA_DB", "true").lower() in {
+    "1", "true", "yes", "y"
+}
+
 # Azure Document Intelligence env vars
 AZURE_DOC_INTELLIGENCE_ENDPOINT = os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT")
 AZURE_DOC_INTELLIGENCE_KEY = os.getenv("AZURE_DOC_INTELLIGENCE_KEY")
@@ -57,6 +72,14 @@ doc_client = DocumentIntelligenceClient(
     endpoint=AZURE_DOC_INTELLIGENCE_ENDPOINT,
     credential=AzureKeyCredential(AZURE_DOC_INTELLIGENCE_KEY),
 )
+
+print("Chroma build mode: Azure OCR only")
+print(f"Documents path: {DOCUMENTS_DIR}")
+print(f"Chroma DB path: {CHROMA_DB_PATH}")
+print(f"Metadata workbook: {PAGE_METADATA_XLSX_PATH}")
+print(f"Azure OCR model: {AZURE_OCR_MODEL_ID}")
+print(f"Azure OCR throttle: {AZURE_OCR_MIN_SECONDS_BETWEEN_CALLS}s between calls")
+print(f"Reset Chroma DB: {RESET_CHROMA_DB}")
 
 DOCUMENTS = [
     "2026 Employee Handbook.pdf",
@@ -327,39 +350,55 @@ def clean_metadata_for_chroma(metadata: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ========================
-# PDF TEXT HELPERS
+# AZURE OCR HELPERS
 # ========================
 
-def has_real_text(docs: List[Document], min_chars: int = 20) -> bool:
+_last_azure_ocr_call_ts = 0.0
+
+
+def wait_for_azure_ocr_rate_limit() -> None:
     """
-    Returns True if the list of Documents has any non-trivial text.
-    This is used to detect cases where PDFMiner / PyMuPDF "succeeded"
-    but the PDF was image-only and yielded essentially no text.
+    Simple client-side throttle to avoid hitting Azure Document Intelligence
+    calls-per-minute limits during index builds.
     """
-    for d in docs:
-        if d.page_content and len(d.page_content.strip()) >= min_chars:
-            return True
-    return False
+    global _last_azure_ocr_call_ts
+
+    elapsed = time.time() - _last_azure_ocr_call_ts
+    wait_seconds = AZURE_OCR_MIN_SECONDS_BETWEEN_CALLS - elapsed
+
+    if wait_seconds > 0:
+        print(f"Waiting {wait_seconds:.1f}s before next Azure OCR call...")
+        time.sleep(wait_seconds)
 
 
 def azure_ocr_to_documents(file_path: str) -> List[Document]:
     """
-    Use Azure AI Document Intelligence (prebuilt-read) to extract text
-    from a PDF. Returns one Document per page.
+    OCR the entire PDF using Azure AI Document Intelligence and return one
+    LangChain Document per visual page.
+
+    Important:
+    - Azure Document Intelligence page.page_number is 1-based.
+    - This preserves the same page model as the page-level metadata workbook.
     """
+    global _last_azure_ocr_call_ts
+
+    wait_for_azure_ocr_rate_limit()
+
     with open(file_path, "rb") as f:
         poller = doc_client.begin_analyze_document(
-            model_id="prebuilt-read",
+            model_id=AZURE_OCR_MODEL_ID,
             body=f,
         )
+
+    _last_azure_ocr_call_ts = time.time()
+
     result = poller.result()
 
     docs: List[Document] = []
 
-    # Build one LangChain Document per page
     for page in result.pages:
-        lines = [line.content for line in page.lines]
-        page_text = "\n".join(lines)
+        lines = [line.content for line in (page.lines or [])]
+        page_text = "\n".join(lines).strip()
 
         docs.append(
             Document(
@@ -368,11 +407,52 @@ def azure_ocr_to_documents(file_path: str) -> List[Document]:
                     "source": file_path,
                     "page": page.page_number,
                     "ocr_provider": "azure_document_intelligence",
+                    "ocr_model_id": AZURE_OCR_MODEL_ID,
                 },
             )
         )
 
     return docs
+
+
+def log_metadata_misses_for_file(
+    doc_name: str,
+    docs_for_file: List[Document],
+    page_metadata: Dict[Tuple[str, int], Dict[str, Any]],
+    max_examples: int = 5,
+) -> None:
+    """
+    Print a few useful diagnostics when page metadata does not match.
+    """
+    misses = [
+        d for d in docs_for_file
+        if not (d.metadata or {}).get("has_page_metadata")
+    ]
+
+    if not misses:
+        return
+
+    normalized_doc_name = normalize_doc_name(doc_name)
+    available_pages = sorted(
+        page
+        for (doc_key, page) in page_metadata.keys()
+        if doc_key == normalized_doc_name
+    )
+
+    print(
+        f"  Metadata miss diagnostic for {doc_name}: "
+        f"Excel pages for this doc={available_pages[:20]}"
+        f"{'...' if len(available_pages) > 20 else ''}"
+    )
+
+    for d in misses[:max_examples]:
+        print(
+            f"  Miss example: doc={doc_name}, "
+            f"ocr_page={d.metadata.get('page')}, "
+            f"text_preview={(d.page_content or '')[:80]!r}"
+        )
+
+
 
 # ========================
 # LOAD & BUILD DATASOURCE
@@ -380,43 +460,32 @@ def azure_ocr_to_documents(file_path: str) -> List[Document]:
 
 page_metadata = load_page_metadata(PAGE_METADATA_XLSX_PATH)
 
+if RESET_CHROMA_DB and os.path.exists(CHROMA_DB_PATH):
+    print(f"RESET_CHROMA_DB=true, deleting existing Chroma directory: {CHROMA_DB_PATH}")
+    shutil.rmtree(CHROMA_DB_PATH)
+
+os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+
 datasource: List[Document] = []
 metadata_matches = 0
 metadata_misses = 0
 
 for doc_name in DOCUMENTS:
     doc_path = os.path.join(DOCUMENTS_DIR, doc_name)
+
     if not os.path.exists(doc_path):
         print(f"WARNING: {doc_path} not found")
         continue
 
-    docs_for_file: List[Document] = []
-
-    # 1) Try PDFMiner
     try:
-        docs_for_file = PDFMinerLoader(doc_path).load()
-    except ValueError as e:
-        print(f"PDFMiner failed to load {doc_path}: {e}")
-
-    # 2) If PDFMiner failed or produced no real text, try PyMuPDF
-    if not has_real_text(docs_for_file):
-        try:
-            print(f"Falling back to PyMuPDF for {doc_path}")
-            docs_for_file = PyMuPDFLoader(doc_path).load()
-        except Exception as e:
-            print(f"PyMuPDF failed to load {doc_path}: {e}")
-
-    # 3) If still no real text, use Azure Document Intelligence
-    if not has_real_text(docs_for_file):
-        try:
-            print(f"No extractable text via PDFMiner/PyMuPDF for {doc_path}, using Azure OCR.")
-            docs_for_file = azure_ocr_to_documents(doc_path)
-        except Exception as e:
-            print(f"Azure Document Intelligence failed for {doc_path}: {e}")
-            docs_for_file = []
+        print(f"OCR processing: {doc_name}")
+        docs_for_file = azure_ocr_to_documents(doc_path)
+    except Exception as e:
+        print(f"Azure Document Intelligence failed for {doc_path}: {e}")
+        docs_for_file = []
 
     if not docs_for_file:
-        print(f"Skipping {doc_path}: could not extract any text.")
+        print(f"Skipping {doc_path}: Azure OCR returned no pages/text.")
         continue
 
     docs_for_file = attach_page_metadata(
@@ -432,14 +501,25 @@ for doc_name in DOCUMENTS:
     metadata_misses += file_misses
 
     print(
-        f"{doc_name}: loaded {len(docs_for_file)} pages "
+        f"{doc_name}: OCR loaded {len(docs_for_file)} pages "
         f"({file_matches} metadata matches, {file_misses} metadata misses)"
     )
 
+    if file_misses:
+        log_metadata_misses_for_file(
+            doc_name=doc_name,
+            docs_for_file=docs_for_file,
+            page_metadata=page_metadata,
+        )
+
     datasource.extend(docs_for_file)
 
-print(f"Collected {len(datasource)} documents/pages")
+print(f"Collected {len(datasource)} OCR documents/pages")
 print(f"Metadata match summary: {metadata_matches} matched, {metadata_misses} missed")
+
+if not datasource:
+    raise RuntimeError("No OCR text was extracted. Chroma index was not built.")
+
 
 # ========================
 # SPLIT, EMBED, INDEX
