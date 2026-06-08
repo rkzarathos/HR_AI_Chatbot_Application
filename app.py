@@ -143,12 +143,113 @@ def log_survey_to_table(session_id: str, ratings: dict) -> str:
     return row_key
 
 
+def normalize_source_metadata_for_table(
+    source_metadata: Optional[List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """
+    Normalize retrieval source details into compact Azure Table-safe records.
+
+    Stored fields are intended for backend audit/debugging, not frontend display.
+    """
+    normalized: List[Dict[str, Any]] = []
+
+    if not source_metadata:
+        return normalized
+
+    seen = set()
+
+    for item in source_metadata:
+        if not isinstance(item, dict):
+            continue
+
+        metadata = item.get("metadata") or {}
+
+        document_name = (
+            item.get("document_name")
+            or item.get("doc_name")
+            or metadata.get("document_name")
+            or ""
+        )
+
+        page = (
+            item.get("page")
+            or item.get("metadata_page")
+            or metadata.get("metadata_page")
+            or metadata.get("page")
+            or ""
+        )
+
+        source_label = item.get("source_label") or ""
+        node_id = item.get("node_id") or ""
+        title = item.get("title") or ""
+
+        section_titles = (
+            item.get("section_titles")
+            or metadata.get("section_titles")
+            or metadata.get("metadata_sections")
+            or metadata.get("metadata_sections_text")
+            or ""
+        )
+
+        topics_discussed = (
+            item.get("topics_discussed")
+            or metadata.get("topics_discussed")
+            or metadata.get("metadata_topics")
+            or metadata.get("metadata_topics_text")
+            or ""
+        )
+
+        record = {
+            "document_name": clean_source_value_for_table(document_name, 500),
+            "page": clean_source_value_for_table(page, 80),
+            "section_titles": clean_source_value_for_table(section_titles, 1200),
+            "topics_discussed": clean_source_value_for_table(topics_discussed, 1600),
+            "source_label": clean_source_value_for_table(source_label, 1000),
+            "node_id": clean_source_value_for_table(node_id, 120),
+            "title": clean_source_value_for_table(title, 500),
+        }
+
+        dedupe_key = (
+            record["document_name"],
+            record["page"],
+            record["node_id"],
+            record["source_label"],
+        )
+
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        normalized.append(record)
+
+    return normalized
+
+
+def clean_source_value_for_table(value: Any, max_chars: int = 1000) -> str:
+    """
+    Convert source metadata values to compact strings for Azure Table Storage.
+    """
+    if value is None:
+        return ""
+
+    if isinstance(value, list):
+        value = "; ".join(str(v) for v in value if v)
+
+    text = re.sub(r"\s+", " ", str(value)).strip()
+
+    if len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "..."
+
+    return text
+
+
 def log_chat_to_table(
     session_id: str,
     question: str,
     response: str,
     classification: Optional[Dict[str, Any]] = None,
     index_source: Optional[str] = None,
+    source_metadata: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     row_key = _make_row_key()
     now = datetime.datetime.utcnow().isoformat() + "Z"
@@ -162,6 +263,41 @@ def log_chat_to_table(
         "Feedback": "",
         "index_source": index_source or "",
     }
+
+    # Backend-only source tracking for Azure Table Storage.
+    # The frontend can continue showing plain excerpts, while this table stores
+    # document/page metadata for auditing retrieval quality.
+    if source_metadata:
+        cleaned_sources = normalize_source_metadata_for_table(source_metadata)
+
+        entity["SourceCount"] = len(cleaned_sources)
+        entity["SourceMetadataJson"] = json.dumps(
+            cleaned_sources,
+            ensure_ascii=False,
+        )[:32000]
+
+        entity["SourceDocuments"] = "; ".join(
+            sorted(
+                {
+                    s.get("document_name", "")
+                    for s in cleaned_sources
+                    if s.get("document_name")
+                }
+            )
+        )[:8000]
+
+        entity["SourcePages"] = "; ".join(
+            [
+                f"{s.get('document_name', '')}: {s.get('page', '')}"
+                for s in cleaned_sources
+                if s.get("document_name") or s.get("page") not in ("", None)
+            ]
+        )[:8000]
+    else:
+        entity["SourceCount"] = 0
+        entity["SourceMetadataJson"] = "[]"
+        entity["SourceDocuments"] = ""
+        entity["SourcePages"] = ""
 
     if classification:
         entity["MainTopicCode"] = (classification.get("main_topic_code") or "")[:128]
@@ -301,6 +437,69 @@ def parse_llm_json(full_text: str) -> dict:
     return {}
 
 
+BENEFITS_TOPIC_CODES = {
+    "T05_BENEFITS_MEDICAL",
+    "T06_BENEFITS_PHARMACY",
+    "T07_BENEFITS_DENTAL_VISION",
+    "T08_BENEFITS_LIFE_DISABILITY",
+}
+
+BENEFITS_KEYWORDS = {
+    "benefit", "benefits", "medical", "health", "healthcare", "curative",
+    "pharmacy", "prescription", "rx", "dental", "vision", "life insurance",
+    "disability", "short-term disability", "long-term disability",
+    "accident insurance", "critical illness", "hospital indemnity",
+    "eap", "fsa", "ppo", "epo", "deductible", "copay", "coverage",
+}
+
+
+def is_benefits_related_question(question: str, payload: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Determines whether to append the benefits summary note.
+
+    Uses both model classification and direct keyword checks so the note is
+    reliable even if classification is imperfect.
+    """
+    payload = payload or {}
+
+    main_topic_code = (payload.get("main_topic_code") or "").strip()
+    main_topic_label = (payload.get("main_topic_label") or "").lower()
+    subtopic = (payload.get("subtopic") or "").lower()
+    question_text = (question or "").lower()
+
+    if main_topic_code in BENEFITS_TOPIC_CODES:
+        return True
+
+    if "benefit" in main_topic_label or "benefit" in subtopic:
+        return True
+
+    search_text = f"{question_text} {main_topic_label} {subtopic}"
+
+    return any(keyword in search_text for keyword in BENEFITS_KEYWORDS)
+
+
+def append_benefits_summary_note(
+    answer: str,
+    question: str,
+    payload: Optional[Dict[str, Any]] = None,
+) -> str:
+    """
+    Appends the required benefits summary note once for benefits-related questions.
+    """
+    answer = (answer or "").strip()
+
+    if not is_benefits_related_question(question, payload):
+        return answer
+
+    if BENEFITS_SUMMARY_LINK_TEXT in answer or BENEFITS_SUMMARY_URL in answer:
+        return answer
+
+    if not answer:
+        return BENEFITS_SUMMARY_NOTE
+
+    return f"{answer}\n\n{BENEFITS_SUMMARY_NOTE}"
+
+
 '''
 def save_to_excel(query, response, feedback=None):
     """Append a query-response pair to an Excel file."""
@@ -372,6 +571,25 @@ PAGEINDEX_MANIFEST_DIR = os.getenv("PAGEINDEX_MANIFEST_DIR", "/pageindex-manifes
 PAGEINDEX_MANIFEST_PATH = os.path.join(PAGEINDEX_MANIFEST_DIR, "pageindex_manifest.json")
 PAGEINDEX_CONTEXT_CHAR_LIMIT = 14000
 
+# Benefits summary link used in benefits-related answers.
+# Place this PDF in DOCUMENTS_PATH, or override the filename/path with env vars.
+BENEFITS_SUMMARY_FILENAME = os.getenv(
+    "BENEFITS_SUMMARY_FILENAME",
+    "OTSL 2026 Benefits Summary.pdf",
+)
+BENEFITS_SUMMARY_URL = os.getenv(
+    "BENEFITS_SUMMARY_URL",
+    "/benefits-summary",
+)
+BENEFITS_SUMMARY_LINK_TEXT = os.getenv(
+    "BENEFITS_SUMMARY_LINK_TEXT",
+    "OTSL 2026 Benefits Summary",
+)
+BENEFITS_SUMMARY_NOTE = (
+    "To get more information and specific recommendations about your benefits, "
+    f"go to [{BENEFITS_SUMMARY_LINK_TEXT}]({BENEFITS_SUMMARY_URL})."
+)
+
 # Initialize Chat Model
 
 chat_model = ChatOpenAI(model_name="gpt-5.4-mini", temperature=0.1)
@@ -411,6 +629,9 @@ Context:
 {context}
 ---------------------
 
+The context may include source metadata such as document name, page, section titles, and topics discussed.
+Use metadata only to understand and cite/organize the retrieved evidence; do not treat metadata alone as policy language if the actual answer is not supported by the retrieved text.
+
 Question: {question}
 
 Priority rules, highest to lowest:
@@ -449,6 +670,7 @@ If the question involves deadlines, enrollment periods, expiration, closure, eli
 - Never contradict the dates used in the answer.
 
 5. Answer style
+- For benefits-related questions, include this exact sentence at the end of the answer: "To get more information and specific recommendations about your benefits, go to [OTSL 2026 Benefits Summary](/benefits-summary)."
 - Be clear, helpful, and detailed enough to fully answer the user's question.
 - Favor quality and completeness over extreme brevity.
 - If the answer involves a process, procedure, requirement, checklist, sequence, or "how to" guidance, break it into bullet points or numbered steps.
@@ -524,6 +746,9 @@ PageIndex-selected evidence:
 {context}
 ---------------------
 
+The evidence may include source metadata such as document name, page, section titles, and topics discussed.
+Use metadata only to understand and cite/organize the selected evidence; do not treat metadata alone as policy language if the actual answer is not supported by the selected text.
+
 Question: {question}
 
 
@@ -566,6 +791,7 @@ If the question involves deadlines, enrollment periods, expiration, closure, eli
 - Never contradict the dates used in the answer.
 
 6. Answer style
+- For benefits-related questions, include this exact sentence at the end of the answer: "To get more information and specific recommendations about your benefits, go to [OTSL 2026 Benefits Summary](/benefits-summary)."
 - Be clear, helpful, and detailed enough to fully answer the user's question.
 - Favor quality and completeness over extreme brevity.
 - If the answer involves a process, procedure, requirement, checklist, sequence, or "how to" guidance, break it into bullet points or numbered steps.
@@ -726,31 +952,53 @@ pageindex_search_chain = LLMChain(llm=chat_model,prompt=pageindex_search_prompt,
 
 
 
+def build_rerank_text(doc: Document, max_chunk_chars: int = 1500) -> str:
+    metadata = doc.metadata or {}
+
+    parts = []
+
+    document_name = metadata.get("document_name")
+    page = metadata.get("metadata_page") or metadata.get("page")
+    section_titles = metadata.get("section_titles")
+    topics_discussed = metadata.get("topics_discussed")
+
+    if document_name:
+        parts.append(f"Document: {document_name}")
+
+    if page:
+        parts.append(f"Page: {page}")
+
+    if section_titles:
+        parts.append(f"Section titles/headings: {section_titles}")
+
+    if topics_discussed:
+        parts.append(f"Topics discussed: {topics_discussed}")
+
+    parts.append("Content:")
+    parts.append((doc.page_content or "")[:max_chunk_chars])
+
+    return "\n".join(str(p) for p in parts if p)
+
+
 def crossencoder_rerank_docs(
     question: str,
     docs: List[Document],
     top_n: int = 10,
     max_chunk_chars: int = 1500,
 ) -> List[Document]:
-    """
-    Use a cross-encoder model to score [question, chunk] pairs and
-    keep the top_n highest scoring chunks.
-    Deterministic and independent of the LLM used for answering.
-    """
     if not docs:
         return []
 
-    # Prepare [question, chunk] pairs
-    pairs = [(question, d.page_content[:max_chunk_chars]) for d in docs]
+    pairs = [
+        (question, build_rerank_text(d, max_chunk_chars=max_chunk_chars))
+        for d in docs
+    ]
 
-    # Predict relevance scores (higher = more relevant)
     scores = cross_encoder.predict(pairs)
 
-    # Zip scores with docs, sort by score descending
     scored_docs = list(zip(scores, docs))
     scored_docs.sort(key=lambda x: x[0], reverse=True)
 
-    # Take top_n docs
     return [doc for score, doc in scored_docs[:top_n]]
 
 
@@ -792,6 +1040,133 @@ def make_source_excerpt(text: str, max_chars: int = 450) -> str:
 
     return clean[:max_chars].rstrip() + "..."
 
+
+def clean_metadata_text(value: Any, max_chars: Optional[int] = None) -> str:
+    """
+    Normalize metadata values for prompts, source labels, and logs.
+    """
+    if value is None:
+        return ""
+
+    if isinstance(value, list):
+        text = "; ".join(str(v) for v in value if v)
+    else:
+        text = str(value)
+
+    text = re.sub(r"\s+", " ", text).strip()
+
+    if max_chars and len(text) > max_chars:
+        text = text[:max_chars].rstrip() + "..."
+
+    return text
+
+
+def metadata_list_to_text(value: Any, max_items: int = 25, max_chars: int = 1200) -> str:
+    """
+    Convert manifest metadata lists/text into compact prompt-safe text.
+    """
+    if isinstance(value, list):
+        items = []
+        seen = set()
+
+        for item in value:
+            clean = clean_metadata_text(item)
+            if not clean:
+                continue
+
+            key = clean.lower()
+            if key in seen:
+                continue
+
+            seen.add(key)
+            items.append(clean)
+
+            if len(items) >= max_items:
+                break
+
+        text = "; ".join(items)
+    else:
+        text = clean_metadata_text(value)
+
+    return clean_metadata_text(text, max_chars=max_chars)
+
+
+def format_metadata_lines(
+    metadata: Dict[str, Any],
+    include_page: bool = True,
+    max_section_chars: int = 350,
+    max_topics_chars: int = 500,
+) -> str:
+    """
+    Creates compact metadata lines to include in answer context.
+
+    This does not affect retrieval embeddings. It only gives the answer model
+    better source/page/topic labels after retrieval has already selected evidence.
+    """
+    if not metadata:
+        return ""
+
+    lines = []
+
+    document_name = clean_metadata_text(metadata.get("document_name"))
+    page = metadata.get("metadata_page") or metadata.get("page")
+
+    section_titles = clean_metadata_text(
+        metadata.get("section_titles") or metadata.get("metadata_sections_text"),
+        max_chars=max_section_chars,
+    )
+    topics_discussed = clean_metadata_text(
+        metadata.get("topics_discussed") or metadata.get("metadata_topics_text"),
+        max_chars=max_topics_chars,
+    )
+
+    if document_name:
+        lines.append(f"Document: {document_name}")
+
+    if include_page and page not in ("", None):
+        lines.append(f"Page: {page}")
+
+    if section_titles:
+        lines.append(f"Section titles/headings: {section_titles}")
+
+    if topics_discussed:
+        lines.append(f"Topics discussed: {topics_discussed}")
+
+    return "\n".join(lines)
+
+
+def build_document_metadata_for_prompt(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Keeps document-level metadata compact for PageIndex routing prompts.
+    """
+    if not metadata:
+        return {}
+
+    topics = metadata_list_to_text(
+        metadata.get("metadata_topics") or metadata.get("metadata_topics_text"),
+        max_items=35,
+        max_chars=1400,
+    )
+    sections = metadata_list_to_text(
+        metadata.get("metadata_sections") or metadata.get("metadata_sections_text"),
+        max_items=25,
+        max_chars=1000,
+    )
+
+    compact = {}
+
+    page_count = metadata.get("metadata_page_count")
+    if page_count:
+        compact["metadata_page_count"] = page_count
+
+    if sections:
+        compact["metadata_sections"] = sections
+
+    if topics:
+        compact["metadata_topics"] = topics
+
+    return compact
+
 def load_pageindex_documents() -> List[Dict[str, Any]]:
     """
     Loads PageIndex trees from local tree files created by build_pageindex.py.
@@ -829,6 +1204,7 @@ def load_pageindex_documents() -> List[Dict[str, Any]]:
                     "doc_id": doc_id,
                     "tree_file": tree_file,
                     "tree": tree,
+                    "metadata": item.get("metadata") or {},
                 }
             )
 
@@ -959,6 +1335,7 @@ def build_pageindex_forest_for_prompt() -> List[Dict[str, Any]]:
             {
                 "doc_name": doc["doc_name"],
                 "doc_id": doc["doc_id"],
+                "metadata": build_document_metadata_for_prompt(doc.get("metadata") or {}),
                 "tree": compact_pageindex_tree(
                     tree_without_text,
                     max_depth=None,
@@ -995,6 +1372,7 @@ def build_pageindex_section_overview_for_prompt() -> List[Dict[str, Any]]:
             {
                 "doc_name": doc["doc_name"],
                 "doc_id": doc["doc_id"],
+                "metadata": build_document_metadata_for_prompt(doc.get("metadata") or {}),
                 "tree": compact_pageindex_tree(
                     tree_without_text,
                     max_depth=2,
@@ -1060,6 +1438,7 @@ def build_selected_pageindex_subtrees_for_prompt(
             {
                 "doc_name": doc_name,
                 "doc_id": doc.get("doc_id"),
+                "metadata": build_document_metadata_for_prompt(doc.get("metadata") or {}),
                 "selected_section_node_id": node_id,
                 "tree": compact_pageindex_tree(
                     selected_node_without_text,
@@ -1107,6 +1486,9 @@ def parse_pageindex_search_json(raw_text: str) -> Dict[str, Any]:
 def build_pageindex_context_from_matches(matches: List[Dict[str, Any]]) -> RetrievalResult:
     """
     Converts selected PageIndex node matches into answer context.
+
+    Now enriches selected PageIndex evidence with document-level metadata
+    saved in the PageIndex manifest during the build process.
     """
     if not matches:
         return RetrievalResult(
@@ -1119,6 +1501,7 @@ def build_pageindex_context_from_matches(matches: List[Dict[str, Any]]) -> Retri
 
     context_parts = []
     sources = []
+    source_details = []
     total_chars = 0
 
     docs_by_name = {
@@ -1145,33 +1528,68 @@ def build_pageindex_context_from_matches(matches: List[Dict[str, Any]]) -> Retri
         title = node.get("title", "")
         page = node.get("page_index", "")
         text = node.get("text") or ""
-        
+
         if isinstance(text, list):
             text = "\n\n".join(str(x) for x in text if x)
-        
+
         if not text:
             text = node.get("summary", "") or node.get("prefix_summary", "")
 
         if not text:
             continue
 
+        doc_metadata = doc.get("metadata") or {}
+        metadata_lines = format_metadata_lines(
+            {
+                **doc_metadata,
+                "document_name": doc_name,
+                "metadata_page": page,
+            },
+            include_page=True,
+            max_section_chars=300,
+            max_topics_chars=450,
+        )
+
+        evidence_header = (
+            f"[Source: {doc_name} | Page: {page} | Node: {node_id} | Title: {title}]"
+        )
+
+        metadata_block = ""
+        if metadata_lines:
+            metadata_block = f"\n[Source metadata]\n{metadata_lines}"
+
         remaining = PAGEINDEX_CONTEXT_CHAR_LIMIT - total_chars
         if remaining <= 0:
             break
 
-        selected_text = text[:remaining].rstrip()
+        available_for_text = remaining - len(evidence_header) - len(metadata_block) - 2
+        if available_for_text <= 0:
+            break
+
+        selected_text = text[:available_for_text].rstrip()
 
         context_parts.append(
-            f"[Source: {doc_name} | Page: {page} | Node: {node_id} | Title: {title}]\n"
-            f"{selected_text}"
+            f"{evidence_header}{metadata_block}\n{selected_text}"
         )
 
         source_excerpt = make_source_excerpt(selected_text)
 
+        # Frontend sources should remain plain relevant excerpts only.
+        # Source metadata stays available internally in context/source_details.
         if source_excerpt and source_excerpt not in sources:
             sources.append(source_excerpt)
 
-        total_chars += len(selected_text)
+        source_details.append(
+            {
+                "doc_name": doc_name,
+                "page": page,
+                "node_id": node_id,
+                "title": title,
+                "metadata": build_document_metadata_for_prompt(doc_metadata),
+            }
+        )
+
+        total_chars += len(context_parts[-1])
 
     if not context_parts:
         return RetrievalResult(
@@ -1187,18 +1605,35 @@ def build_pageindex_context_from_matches(matches: List[Dict[str, Any]]) -> Retri
         confidence=0.0,
         context="\n\n".join(context_parts),
         sources=sources,
-        metadata={"matches": matches},
+        metadata={
+            "matches": matches,
+            "source_details": source_details,
+        },
     )
 
 
 def build_chroma_source_label(doc: Document) -> str:
-    source = doc.metadata.get("source", "Unknown source")
-    page = doc.metadata.get("page", "")
+    """
+    Builds a source label using the metadata now persisted in Chroma.
+
+    Expected metadata from the updated Chroma build:
+    - document_name
+    - metadata_page
+    - section_titles
+    - topics_discussed
+    """
+    metadata = doc.metadata or {}
+
+    source = metadata.get("source", "Unknown source")
+    document_name = metadata.get("document_name")
+    page = metadata.get("metadata_page") or metadata.get("page", "")
 
     try:
-        source_name = os.path.basename(source)
+        source_name = clean_metadata_text(document_name) or os.path.basename(source)
     except Exception:
         source_name = str(source)
+
+    label = source_name
 
     if page != "":
         try:
@@ -1208,9 +1643,37 @@ def build_chroma_source_label(doc: Document) -> str:
         except Exception:
             page_num = page
 
-        return f"{source_name} — page {page_num}"
+        label = f"{label} — page {page_num}"
 
-    return source_name
+    section_titles = clean_metadata_text(metadata.get("section_titles"), max_chars=140)
+    topics_discussed = clean_metadata_text(metadata.get("topics_discussed"), max_chars=180)
+
+    if section_titles:
+        label += f" — {section_titles}"
+    elif topics_discussed:
+        label += f" — {topics_discussed}"
+
+    return label
+
+
+def build_chroma_context_block(doc: Document) -> str:
+    """
+    Adds structured Chroma metadata to the answer context without changing
+    the Chroma embeddings/index. This helps the answer model understand
+    the source document, page, section headings, and topics for selected chunks.
+    """
+    source_label = build_chroma_source_label(doc)
+    metadata_lines = format_metadata_lines(doc.metadata or {}, include_page=True)
+
+    if metadata_lines:
+        return (
+            f"[Source: {source_label}]\n"
+            f"[Source metadata]\n{metadata_lines}\n"
+            f"{doc.page_content}"
+        )
+
+    return f"[Source: {source_label}]\n{doc.page_content}"
+
 
 pageindex_documents = load_pageindex_documents()
 
@@ -1255,6 +1718,23 @@ async def get_logo():
     if not os.path.exists(logo_path):
         raise HTTPException(status_code=404, detail="Logo not found")
     return FileResponse(logo_path, media_type="image/png")
+
+
+@app.get("/benefits-summary")
+async def get_benefits_summary():
+    benefits_summary_path = os.path.join(DOCUMENTS_DIR, BENEFITS_SUMMARY_FILENAME)
+
+    if not os.path.exists(benefits_summary_path):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Benefits summary not found: {BENEFITS_SUMMARY_FILENAME}",
+        )
+
+    return FileResponse(
+        benefits_summary_path,
+        media_type="application/pdf",
+        filename=BENEFITS_SUMMARY_FILENAME,
+    )
 
 async def sanitize_filename(filename):
     sanitized_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', filename)
@@ -1461,17 +1941,29 @@ async def run_chroma_crossencoder_retrieval(question: str) -> RetrievalResult:
         context_parts = []
         sources = []
 
+        source_details = []
+
         for doc in relevant_docs:
             source_label = build_chroma_source_label(doc)
 
-            context_parts.append(
-                f"[Source: {source_label}]\n{doc.page_content}"
-            )
+            context_parts.append(build_chroma_context_block(doc))
 
             source_excerpt = make_source_excerpt(doc.page_content)
 
+            # Frontend sources should remain plain relevant excerpts only.
+            # Source metadata stays available internally in context/source_details.
             if source_excerpt and source_excerpt not in sources:
                 sources.append(source_excerpt)
+
+            source_details.append(
+                {
+                    "source_label": source_label,
+                    "document_name": (doc.metadata or {}).get("document_name", ""),
+                    "page": (doc.metadata or {}).get("metadata_page") or (doc.metadata or {}).get("page", ""),
+                    "section_titles": (doc.metadata or {}).get("section_titles", ""),
+                    "topics_discussed": (doc.metadata or {}).get("topics_discussed", ""),
+                }
+            )
 
         return RetrievalResult(
             index_source="Chroma Index",
@@ -1481,6 +1973,7 @@ async def run_chroma_crossencoder_retrieval(question: str) -> RetrievalResult:
             metadata={
                 "candidate_count": len(candidate_docs),
                 "selected_count": len(relevant_docs),
+                "source_details": source_details,
             },
         )
 
@@ -1631,12 +2124,19 @@ async def ask_question(request: Request):
         if not answer:
             answer = "I couldn't format a structured response. Please re-try your question."
 
+        answer = append_benefits_summary_note(
+            answer=answer,
+            question=question,
+            payload=payload,
+        )
+
         log_id = log_chat_to_table(
             session_id=client_session_id,
             question=question,
             response=answer,
             classification=payload,
             index_source=index_source,
+            source_metadata=(selected_result.metadata or {}).get("source_details", []),
         )
 
         sanitized_filename = f"{client_session_id}_{uuid.uuid4().hex}"
