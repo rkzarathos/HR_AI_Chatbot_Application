@@ -670,7 +670,6 @@ If the question involves deadlines, enrollment periods, expiration, closure, eli
 - Never contradict the dates used in the answer.
 
 5. Answer style
-- For benefits-related questions, include this exact sentence at the end of the answer: "To get more information and specific recommendations about your benefits, go to [OTSL 2026 Benefits Summary](/benefits-summary)."
 - Be clear, helpful, and detailed enough to fully answer the user's question.
 - Favor quality and completeness over extreme brevity.
 - If the answer involves a process, procedure, requirement, checklist, sequence, or "how to" guidance, break it into bullet points or numbered steps.
@@ -791,7 +790,6 @@ If the question involves deadlines, enrollment periods, expiration, closure, eli
 - Never contradict the dates used in the answer.
 
 6. Answer style
-- For benefits-related questions, include this exact sentence at the end of the answer: "To get more information and specific recommendations about your benefits, go to [OTSL 2026 Benefits Summary](/benefits-summary)."
 - Be clear, helpful, and detailed enough to fully answer the user's question.
 - Favor quality and completeness over extreme brevity.
 - If the answer involves a process, procedure, requirement, checklist, sequence, or "how to" guidance, break it into bullet points or numbered steps.
@@ -1718,23 +1716,6 @@ async def get_logo():
     if not os.path.exists(logo_path):
         raise HTTPException(status_code=404, detail="Logo not found")
     return FileResponse(logo_path, media_type="image/png")
-
-
-@app.get("/benefits-summary")
-async def get_benefits_summary():
-    benefits_summary_path = os.path.join(DOCUMENTS_DIR, BENEFITS_SUMMARY_FILENAME)
-
-    if not os.path.exists(benefits_summary_path):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Benefits summary not found: {BENEFITS_SUMMARY_FILENAME}",
-        )
-
-    return FileResponse(
-        benefits_summary_path,
-        media_type="application/pdf",
-        filename=BENEFITS_SUMMARY_FILENAME,
-    )
 
 async def sanitize_filename(filename):
     sanitized_filename = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', filename)
