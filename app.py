@@ -579,7 +579,7 @@ BENEFITS_SUMMARY_FILENAME = os.getenv(
 )
 BENEFITS_SUMMARY_URL = os.getenv(
     "BENEFITS_SUMMARY_URL",
-    "/benefits-summary",
+    "https://britehr.app/On-TargetSuppliesLogisticsLtd_2026/1?wgl=en",
 )
 BENEFITS_SUMMARY_LINK_TEXT = os.getenv(
     "BENEFITS_SUMMARY_LINK_TEXT",
