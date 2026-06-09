@@ -105,7 +105,7 @@ DOCUMENTS = [
 # Throttle every PageIndex API call.
 # 150 seconds = 2.5 minutes.
 PAGEINDEX_API_MIN_SECONDS_BETWEEN_CALLS = float(
-    os.getenv("PAGEINDEX_API_MIN_SECONDS_BETWEEN_CALLS", "150")
+    os.getenv("PAGEINDEX_API_MIN_SECONDS_BETWEEN_CALLS", "90")
 )
 
 # Readiness polling also goes through the same throttle.
