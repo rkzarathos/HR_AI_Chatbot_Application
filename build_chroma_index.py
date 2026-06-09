@@ -53,11 +53,6 @@ AZURE_OCR_MIN_SECONDS_BETWEEN_CALLS = float(
     os.getenv("AZURE_OCR_MIN_SECONDS_BETWEEN_CALLS", "4")
 )
 
-# When true, deletes the existing Chroma directory before rebuilding.
-RESET_CHROMA_DB = os.getenv("RESET_CHROMA_DB", "true").lower() in {
-    "1", "true", "yes", "y"
-}
-
 # Azure Document Intelligence env vars
 AZURE_DOC_INTELLIGENCE_ENDPOINT = os.getenv("AZURE_DOC_INTELLIGENCE_ENDPOINT")
 AZURE_DOC_INTELLIGENCE_KEY = os.getenv("AZURE_DOC_INTELLIGENCE_KEY")
@@ -459,12 +454,6 @@ def log_metadata_misses_for_file(
 # ========================
 
 page_metadata = load_page_metadata(PAGE_METADATA_XLSX_PATH)
-
-if RESET_CHROMA_DB and os.path.exists(CHROMA_DB_PATH):
-    print(f"RESET_CHROMA_DB=true, deleting existing Chroma directory: {CHROMA_DB_PATH}")
-    shutil.rmtree(CHROMA_DB_PATH)
-
-os.makedirs(CHROMA_DB_PATH, exist_ok=True)
 
 datasource: List[Document] = []
 metadata_matches = 0
