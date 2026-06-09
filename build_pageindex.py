@@ -105,7 +105,7 @@ DOCUMENTS = [
 # Throttle every PageIndex API call.
 # 90 seconds = 1.5 minutes.
 PAGEINDEX_API_MIN_SECONDS_BETWEEN_CALLS = float(
-    os.getenv("PAGEINDEX_API_MIN_SECONDS_BETWEEN_CALLS", "90")
+    os.getenv("PAGEINDEX_API_MIN_SECONDS_BETWEEN_CALLS", "20")
 )
 
 # Readiness polling also goes through the same throttle.
@@ -113,7 +113,7 @@ PAGEINDEX_API_MIN_SECONDS_BETWEEN_CALLS = float(
 POLL_INTERVAL_SECONDS = float(os.getenv("PAGEINDEX_POLL_INTERVAL_SECONDS", "0"))
 
 # With 150 seconds between readiness checks, 120 polls = up to 5 hours per document.
-MAX_POLLS_PER_DOCUMENT = int(os.getenv("PAGEINDEX_MAX_POLLS_PER_DOCUMENT", "120"))
+MAX_POLLS_PER_DOCUMENT = int(os.getenv("PAGEINDEX_MAX_POLLS_PER_DOCUMENT", "20"))
 
 
 # ========================
