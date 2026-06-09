@@ -74,7 +74,6 @@ print(f"Chroma DB path: {CHROMA_DB_PATH}")
 print(f"Metadata workbook: {PAGE_METADATA_XLSX_PATH}")
 print(f"Azure OCR model: {AZURE_OCR_MODEL_ID}")
 print(f"Azure OCR throttle: {AZURE_OCR_MIN_SECONDS_BETWEEN_CALLS}s between calls")
-print(f"Reset Chroma DB: {RESET_CHROMA_DB}")
 
 DOCUMENTS = [
     "2026 Employee Handbook.pdf",
