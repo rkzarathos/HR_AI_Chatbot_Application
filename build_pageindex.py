@@ -15,11 +15,11 @@ import pageindex.utils as utils
 # CONFIG
 # ========================
 
-# try:
-#     from dotenv import load_dotenv
-#     load_dotenv()
-# except Exception:
-#     pass
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 PAGEINDEX_API_KEY = os.getenv("PAGEINDEX_API_KEY")
 
@@ -36,6 +36,19 @@ PAGEINDEX_MANIFEST_DIR = Path(
 
 PAGEINDEX_MANIFEST_PATH = PAGEINDEX_MANIFEST_DIR / "pageindex_manifest.json"
 PAGEINDEX_TREES_DIR = PAGEINDEX_MANIFEST_DIR / "pageindex_trees"
+
+# Local build note:
+# PAGEINDEX_MANIFEST_DIR controls where files are written on your machine.
+# PAGEINDEX_RUNTIME_MANIFEST_DIR controls the tree_file path saved inside the manifest.
+# If you upload this folder to Azure at /app/pageindex-manifest, keep this as /app/pageindex-manifest.
+PAGEINDEX_RUNTIME_MANIFEST_DIR = Path(
+    os.getenv("PAGEINDEX_RUNTIME_MANIFEST_DIR", "/app/pageindex-manifest")
+)
+
+# Resume mode prevents re-submitting docs that already have a saved tree.
+RESUME_EXISTING_MANIFEST = os.getenv("RESUME_EXISTING_MANIFEST", "true").lower() in {
+    "1", "true", "yes", "y"
+}
 
 # Page-level metadata workbook.
 # Expected sheet columns:
@@ -345,6 +358,77 @@ def load_page_metadata(
     return page_metadata, document_metadata
 
 
+
+# ========================
+# RESUME HELPERS
+# ========================
+
+def load_existing_manifest_if_any() -> Optional[Dict[str, Any]]:
+    if not RESUME_EXISTING_MANIFEST:
+        return None
+
+    if not PAGEINDEX_MANIFEST_PATH.exists():
+        return None
+
+    try:
+        with PAGEINDEX_MANIFEST_PATH.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+
+        if not isinstance(manifest, dict):
+            print(f"Existing manifest is not a JSON object: {PAGEINDEX_MANIFEST_PATH}")
+            return None
+
+        print(f"Loaded existing manifest for resume: {PAGEINDEX_MANIFEST_PATH}")
+        return manifest
+
+    except Exception as e:
+        print(f"Could not load existing manifest for resume: {e}")
+        return None
+
+
+def get_completed_document_record(
+    manifest: Dict[str, Any],
+    doc_name: str,
+) -> Optional[Dict[str, Any]]:
+    for record in manifest.get("documents", []):
+        if not isinstance(record, dict):
+            continue
+
+        if normalize_doc_name(record.get("doc_name")) != normalize_doc_name(doc_name):
+            continue
+
+        local_tree_file = record.get("local_tree_file")
+        if local_tree_file and Path(local_tree_file).exists():
+            return record
+
+        tree_file = record.get("tree_file")
+        if tree_file:
+            tree_path = Path(tree_file)
+            possible_local_tree = PAGEINDEX_TREES_DIR / tree_path.name
+
+            if tree_path.exists() or possible_local_tree.exists():
+                return record
+
+    return None
+
+
+def merge_existing_manifest_with_new_header(
+    existing_manifest: Optional[Dict[str, Any]],
+    new_manifest: Dict[str, Any],
+) -> Dict[str, Any]:
+    if not existing_manifest:
+        return new_manifest
+
+    new_manifest["documents"] = existing_manifest.get("documents", [])
+    new_manifest["documents_submitted"] = len(new_manifest["documents"])
+    new_manifest["previous_documents_missing"] = existing_manifest.get("documents_missing", [])
+    new_manifest["previous_documents_failed"] = existing_manifest.get("documents_failed", [])
+    new_manifest["resumed_from_manifest"] = str(PAGEINDEX_MANIFEST_PATH)
+    new_manifest["resumed_at_utc"] = utc_now_iso()
+
+    return new_manifest
+
+
 # ========================
 # GENERAL HELPERS
 # ========================
@@ -444,15 +528,18 @@ def save_tree_file(
     doc_name: str,
     doc_id: str,
     tree: Any,
-) -> str:
+) -> Tuple[str, str]:
     PAGEINDEX_TREES_DIR.mkdir(parents=True, exist_ok=True)
 
-    tree_file = PAGEINDEX_TREES_DIR / f"{safe_filename(doc_name)}__{doc_id}.json"
+    tree_filename = f"{safe_filename(doc_name)}__{doc_id}.json"
+    local_tree_file = PAGEINDEX_TREES_DIR / tree_filename
 
-    with tree_file.open("w", encoding="utf-8") as f:
+    with local_tree_file.open("w", encoding="utf-8") as f:
         json.dump(tree, f, ensure_ascii=False, indent=2)
 
-    return str(tree_file)
+    runtime_tree_file = PAGEINDEX_RUNTIME_MANIFEST_DIR / "pageindex_trees" / tree_filename
+
+    return str(local_tree_file), str(runtime_tree_file)
 
 
 def submit_and_save_document(
@@ -488,19 +575,21 @@ def submit_and_save_document(
         except Exception as e:
             print(f"Could not print PageIndex tree for {doc_name}: {e}")
 
-    tree_file = save_tree_file(
+    local_tree_file, runtime_tree_file = save_tree_file(
         doc_name=doc_name,
         doc_id=doc_id,
         tree=tree,
     )
 
-    print(f"Saved tree file: {tree_file}")
+    print(f"Saved local tree file: {local_tree_file}")
+    print(f"Manifest runtime tree_file: {runtime_tree_file}")
 
     return {
         "doc_name": doc_name,
         "doc_path": str(doc_path),
         "pageindex_doc_id": doc_id,
-        "tree_file": tree_file,
+        "tree_file": runtime_tree_file,
+        "local_tree_file": local_tree_file,
         "submitted_at_utc": utc_now_iso(),
         "api_key_used": "PAGEINDEX_API_KEY",
 
@@ -520,6 +609,8 @@ def main() -> None:
     print(f"PAGEINDEX_MANIFEST_DIR: {PAGEINDEX_MANIFEST_DIR}")
     print(f"PAGEINDEX_MANIFEST_PATH: {PAGEINDEX_MANIFEST_PATH}")
     print(f"PAGEINDEX_TREES_DIR: {PAGEINDEX_TREES_DIR}")
+    print(f"PAGEINDEX_RUNTIME_MANIFEST_DIR: {PAGEINDEX_RUNTIME_MANIFEST_DIR}")
+    print(f"RESUME_EXISTING_MANIFEST: {RESUME_EXISTING_MANIFEST}")
     print(f"PAGE_METADATA_XLSX_PATH: {PAGE_METADATA_XLSX_PATH}")
     print(f"PAGE_METADATA_SHEET_NAME: {PAGE_METADATA_SHEET_NAME}")
     print(
@@ -536,6 +627,8 @@ def main() -> None:
 
     PAGEINDEX_MANIFEST_DIR.mkdir(parents=True, exist_ok=True)
     PAGEINDEX_TREES_DIR.mkdir(parents=True, exist_ok=True)
+
+    existing_manifest = load_existing_manifest_if_any()
 
     client = PageIndexClient(api_key=PAGEINDEX_API_KEY)
 
@@ -556,6 +649,8 @@ def main() -> None:
         "api_key_used": "PAGEINDEX_API_KEY",
     }
 
+    manifest = merge_existing_manifest_with_new_header(existing_manifest, manifest)
+
     for doc_index, doc_name in enumerate(DOCUMENTS, start=1):
         doc_path = DOCUMENTS_DIR / doc_name
         normalized_doc_name = normalize_doc_name(doc_name)
@@ -566,7 +661,17 @@ def main() -> None:
                 f"WARNING: No metadata found in workbook for hardcoded document: {doc_name}",
                 flush=True,
             )
-            manifest["documents_without_metadata"].append(doc_name)
+            if doc_name not in manifest["documents_without_metadata"]:
+                manifest["documents_without_metadata"].append(doc_name)
+
+        completed_record = get_completed_document_record(manifest, doc_name)
+        if completed_record:
+            print(
+                f"\n===== Document {doc_index}/{len(DOCUMENTS)}: {doc_name} =====",
+                flush=True,
+            )
+            print(f"Skipping already completed document: {doc_name}", flush=True)
+            continue
 
         print(
             f"\n===== Document {doc_index}/{len(DOCUMENTS)}: {doc_name} =====",
@@ -626,6 +731,7 @@ def main() -> None:
 
         print(f"Progress manifest saved to: {PAGEINDEX_MANIFEST_PATH}", flush=True)
 
+    manifest["documents_submitted"] = len(manifest.get("documents", []))
     manifest["completed_at_utc"] = utc_now_iso()
 
     with PAGEINDEX_MANIFEST_PATH.open("w", encoding="utf-8") as f:
