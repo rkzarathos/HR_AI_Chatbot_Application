@@ -3,7 +3,7 @@ import re
 import json
 import time
 import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
@@ -41,9 +41,10 @@ PAGEINDEX_TREES_DIR = PAGEINDEX_MANIFEST_DIR / "pageindex_trees"
 # PAGEINDEX_MANIFEST_DIR controls where files are written on your machine.
 # PAGEINDEX_RUNTIME_MANIFEST_DIR controls the tree_file path saved inside the manifest.
 # If you upload this folder to Azure at /app/pageindex-manifest, keep this as /app/pageindex-manifest.
-PAGEINDEX_RUNTIME_MANIFEST_DIR = Path(
-    os.getenv("PAGEINDEX_RUNTIME_MANIFEST_DIR", "/app/pageindex-manifest")
-)
+PAGEINDEX_RUNTIME_MANIFEST_DIR = os.getenv(
+    "PAGEINDEX_RUNTIME_MANIFEST_DIR",
+    "/app/pageindex-manifest",
+).replace("\\", "/").rstrip("/")
 
 # Resume mode prevents re-submitting docs that already have a saved tree.
 RESUME_EXISTING_MANIFEST = os.getenv("RESUME_EXISTING_MANIFEST", "true").lower() in {
@@ -537,9 +538,14 @@ def save_tree_file(
     with local_tree_file.open("w", encoding="utf-8") as f:
         json.dump(tree, f, ensure_ascii=False, indent=2)
 
-    runtime_tree_file = PAGEINDEX_RUNTIME_MANIFEST_DIR / "pageindex_trees" / tree_filename
+    # Important: manifest tree_file must use Linux/POSIX separators because
+    # the runtime container reads it on Linux. Do not use pathlib.Path here
+    # when building locally on Windows, or it will write \\app\\... paths.
+    runtime_tree_file = str(
+        PurePosixPath(PAGEINDEX_RUNTIME_MANIFEST_DIR) / "pageindex_trees" / tree_filename
+    )
 
-    return str(local_tree_file), str(runtime_tree_file)
+    return str(local_tree_file), runtime_tree_file
 
 
 def submit_and_save_document(
