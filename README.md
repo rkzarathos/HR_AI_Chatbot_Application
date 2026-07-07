@@ -1,4 +1,4 @@
-# OTSL HR AI Chatbot Application
+# HR AI Chatbot Application
 
 An HR-focused retrieval augmented generation application for On-Target Supplies & Logistics (OTSL). The app answers employee HR questions from approved HR documents, returns supporting source excerpts, generates answer audio, and records chat, feedback, and survey data for review.
 
