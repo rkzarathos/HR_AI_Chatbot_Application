@@ -315,16 +315,6 @@ The prompt in `app.py` enforces several HR-specific constraints:
 - Classify each question into a known HR topic category.
 - Ask a user-style follow-up question.
 
-## Known Gaps And Cleanup Opportunities
-
-- The README and source now describe the intended production document layout, but the committed `data/` folder does not match the default `DOCUMENTS_PATH` expected by the app.
-- `startup.sh` builds indexes but is not invoked by the Dockerfile.
-- The app expects `dash image without bg.png` and `thinking-gif.mp4`, but those assets are not currently committed.
-- The index builders have hardcoded document filename lists. Moving these to config would make the app easier to deploy.
-- There is no `.env.example` file yet.
-- There are no automated tests.
-- `requirements.txt` contains duplicate `python-dotenv`.
-
 ## Development Notes
 
 - Keep API keys and connection strings out of the repository.
